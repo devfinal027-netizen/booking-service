@@ -194,6 +194,17 @@ exports.adminGetDriverWallet = async (req, res) => {
         if (info) user = { id: String(info.id), name: info.name, phone: info.phone, email: info.email };
       } catch (_) {}
     }
-    return res.json({ wallet: wallet || { userId: driverId, role: 'driver', balance: 0, totalEarnings: 0, currency: 'ETB' }, user: user || { id: driverId }, transactions: txs });
+    const baseWallet = wallet || { userId: driverId, role: 'driver', balance: 0, totalEarnings: 0, currency: 'ETB' };
+    const flattenedWallet = {
+      role: baseWallet.role,
+      balance: baseWallet.balance,
+      totalEarnings: baseWallet.totalEarnings || 0,
+      currency: baseWallet.currency || 'ETB',
+      id: (user && user.id) || String(baseWallet.userId),
+      name: user && user.name,
+      phone: user && user.phone,
+      email: user && user.email
+    };
+    return res.json({ wallet: flattenedWallet, transactions: txs });
   } catch (e) { return res.status(500).json({ message: e.message }); }
 };
