@@ -11,11 +11,31 @@ const authenticate = (req, res, next) => {
   try {
     const issuer = process.env.TOKEN_ISSUER || process.env.JWT_ISSUER || 'auth-service';
     const audience = process.env.TOKEN_AUDIENCE || process.env.JWT_AUDIENCE || 'booking-service';
-    const claims = jwt.verify(token, process.env.JWT_SECRET, {
-      algorithms: ['HS256'],
-      issuer,
-      audience,
-    });
+    const header = jwt.decode(token, { complete: true })?.header || {};
+    const algorithms = ['HS256'];
+
+    const rawSecret = process.env.JWT_SECRET;
+    const isBase64Flag = process.env.JWT_SECRET_IS_BASE64 === '1' || process.env.ALLOW_BASE64_JWT_SECRET === '1';
+    const base64Secret = (() => {
+      try { return Buffer.from(String(rawSecret || ''), 'base64'); } catch (_) { return null; }
+    })();
+
+    let claims;
+    let firstError;
+    try {
+      claims = jwt.verify(token, rawSecret, { algorithms, issuer, audience });
+    } catch (e1) {
+      firstError = e1;
+      if (isBase64Flag && base64Secret && e1 && e1.name === 'JsonWebTokenError' && /invalid signature/i.test(String(e1.message))) {
+        try {
+          claims = jwt.verify(token, base64Secret, { algorithms, issuer, audience });
+        } catch (e2) {
+          throw e2;
+        }
+      } else {
+        throw e1;
+      }
+    }
     req.user = claims;
     if (process.env.AUTH_DEBUG === '1') {
       logger.info('[auth] verified', {
@@ -25,6 +45,10 @@ const authenticate = (req, res, next) => {
         aud: claims.aud,
         exp: claims.exp,
         path: req.originalUrl || req.url,
+        alg: header.alg,
+        typ: header.typ,
+        secretLen: rawSecret ? String(rawSecret).length : 0,
+        base64SecretLen: base64Secret ? base64Secret.length : 0,
       });
     }
     return next();
