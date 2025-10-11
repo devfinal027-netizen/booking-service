@@ -167,15 +167,14 @@ exports.adminListWallets = async (req, res) => {
     let enriched = items.map(w => ({ ...w, user: { id: String(w.userId) } }));
     try {
       const { Driver } = require('../models/userModels');
-      const { Types } = require('mongoose');
       const driverIds = [...new Set(items.map(w => String(w.userId)).filter(Boolean))];
-      const validIds = driverIds.filter(id => Types.ObjectId.isValid(id));
-      const driversById = validIds.length ? await Driver.find({ _id: { $in: validIds } }).select({ _id: 1, name: 1, phone: 1, email: 1 }).lean() : [];
+      // First try matching by local _id (string ids supported)
+      const driversById = driverIds.length ? await Driver.find({ _id: { $in: driverIds } }).select({ _id: 1, name: 1, phone: 1, email: 1 }).lean() : [];
       const dmapById = Object.fromEntries(driversById.map(d => [String(d._id), { id: String(d._id), name: d.name, phone: d.phone, email: d.email }]));
 
-      // Map local by externalId for non-ObjectId userIds
-      const nonObjectIds = driverIds.filter(id => !Types.ObjectId.isValid(id));
-      const driversByExternal = nonObjectIds.length ? await Driver.find({ externalId: { $in: nonObjectIds } }).select({ _id: 1, externalId: 1, name: 1, phone: 1, email: 1 }).lean() : [];
+      // Also try matching by externalId for any that didn't resolve by _id
+      const unresolvedIds = driverIds.filter(id => !dmapById[id]);
+      const driversByExternal = unresolvedIds.length ? await Driver.find({ externalId: { $in: unresolvedIds } }).select({ _id: 1, externalId: 1, name: 1, phone: 1, email: 1 }).lean() : [];
       const dmapByExternal = Object.fromEntries(driversByExternal.map(d => [String(d.externalId), { id: String(d._id), name: d.name, phone: d.phone, email: d.email, externalId: String(d.externalId) }]));
 
       enriched = enriched.map(w => ({
@@ -207,9 +206,9 @@ exports.adminListWallets = async (req, res) => {
       totalEarnings: w.totalEarnings || 0,
       currency: w.currency || 'ETB',
       id: (w.user && w.user.id) || String(w.userId),
-      name: w.user && w.user.name,
-      phone: w.user && w.user.phone,
-      email: w.user && w.user.email
+      name: (w.user && w.user.name) ?? null,
+      phone: (w.user && w.user.phone) ?? null,
+      email: (w.user && w.user.email) ?? null
     }));
 
     return res.json({ items: flattened, page, pageSize, total });
