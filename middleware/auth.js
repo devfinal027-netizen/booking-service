@@ -1,32 +1,18 @@
-const { verifyExternalToken } = require('../utils/jwt');
+const jwt = require('jsonwebtoken');
 
 const authenticate = (req, res, next) => {
-  const authHeader = req.headers.authorization || '';
-  if (!authHeader) {
-    return res.status(401).json({ message: 'Unauthorized' });
-  }
+  const raw = req.headers.authorization || '';
+  const token = String(raw).replace(/^\s*Bearer\s+/i, '');
+  if (!token) return res.status(401).json({ message: 'Unauthorized' });
   try {
-    const claims = verifyExternalToken(authHeader);
+    const claims = jwt.verify(token, process.env.JWT_SECRET, {
+      issuer: process.env.TOKEN_ISSUER || process.env.JWT_ISSUER,
+      audience: process.env.TOKEN_AUDIENCE || process.env.JWT_AUDIENCE,
+    });
     req.user = claims;
-    if (process.env.AUTH_DEBUG === '1') {
-      console.log('✅ Token valid:', {
-        id: claims.id,
-        type: claims.type,
-        iss: claims.iss,
-        aud: claims.aud,
-        ver: claims.ver,
-        exp: claims?.exp ? new Date(claims.exp * 1000) : undefined,
-      });
-    }
     return next();
-  } catch (error) {
-    if (process.env.AUTH_DEBUG === '1') {
-      console.log('❌ Token invalid:', {
-        error: error.message,
-        path: req.path,
-      });
-    }
-    return res.status(401).json({ message: 'Unauthorized' });
+  } catch (e) {
+    return res.status(401).json({ message: 'Invalid token' });
   }
 };
 
