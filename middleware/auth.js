@@ -1,4 +1,4 @@
-const { verifyExternalToken } = require('../external service/jwtHelper');
+const { verifyExternalToken } = require('../utils/jwt');
 
 const authenticate = (req, res, next) => {
   const authHeader = req.headers.authorization || '';
