@@ -21,12 +21,12 @@
 					"name": "Socket Connect (Passenger)",
 					"request": {
 						"method": "GET",
-						"header": [
-							{
-								"key": "X-Postman-Note",
-								"value": "Use a Socket.IO client. This is a documentation stub."
-							}
-						],
+                        "header": [
+                            {
+                                "key": "X-Postman-Note",
+                                "value": "Use a Socket.IO client. This is a documentation stub."
+                            }
+                        ]
 						"url": {
 							"raw": ""
 						}
@@ -610,8 +610,7 @@
 									],
 									"type": "text/javascript"
 								}
-							]
-							,
+                            ],
 							"request": {
 								"method": "POST",
 								"header": [
