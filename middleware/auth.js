@@ -1,27 +1,44 @@
 const jwt = require('jsonwebtoken');
+const logger = require('../utils/logger');
 
 const authenticate = (req, res, next) => {
   const raw = req.headers.authorization || '';
-  const token = String(raw).replace(/^\s*(Bearer|JWT|Token)\s+/i, '');
-  if (!token) return res.status(401).json({ message: 'Unauthorized' });
+  const token = String(raw).replace(/^\s*Bearer\s+/i, '');
+  if (!token) {
+    logger.warn('[auth] missing token', { path: req.originalUrl || req.url, rawHeader: raw ? `${raw.slice(0,20)}...` : '' });
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
   try {
-    const verifyOptions = {};
-    if (process.env.TOKEN_ISSUER || process.env.JWT_ISSUER) {
-      verifyOptions.issuer = process.env.TOKEN_ISSUER || process.env.JWT_ISSUER;
-    }
-    if (process.env.TOKEN_AUDIENCE || process.env.JWT_AUDIENCE) {
-      verifyOptions.audience = process.env.TOKEN_AUDIENCE || process.env.JWT_AUDIENCE;
-    }
-    const claims = jwt.verify(token, process.env.JWT_SECRET, verifyOptions);
+    const issuer = process.env.TOKEN_ISSUER || process.env.JWT_ISSUER || 'auth-service';
+    const audience = process.env.TOKEN_AUDIENCE || process.env.JWT_AUDIENCE || 'booking-service';
+    const claims = jwt.verify(token, process.env.JWT_SECRET, {
+      algorithms: ['HS256'],
+      issuer,
+      audience,
+    });
     req.user = claims;
-    return next();
-  } catch (e) {
     if (process.env.AUTH_DEBUG === '1') {
-      console.log('Auth verify failed', {
-        error: e && e.message,
+      logger.info('[auth] verified', {
+        id: claims.id,
+        type: claims.type,
+        iss: claims.iss,
+        aud: claims.aud,
+        exp: claims.exp,
         path: req.originalUrl || req.url,
       });
     }
+    return next();
+  } catch (e) {
+    logger.warn('[auth] verify failed', {
+      error: e && e.message,
+      name: e && e.name,
+      code: e && e.code,
+      path: req.originalUrl || req.url,
+      issuer: process.env.TOKEN_ISSUER || process.env.JWT_ISSUER || 'auth-service',
+      audience: process.env.TOKEN_AUDIENCE || process.env.JWT_AUDIENCE || 'booking-service',
+      hasSecret: !!process.env.JWT_SECRET,
+      headerPreview: raw ? `${raw.slice(0, 14)}...` : '',
+    });
     return res.status(401).json({ message: 'Invalid token' });
   }
 };
