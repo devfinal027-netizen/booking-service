@@ -3,6 +3,7 @@ const { Booking, TripHistory } = require('../models/bookingModels');
 const { Driver, Passenger } = require('../models/userModels');
 const { Commission, DriverEarnings, AdminEarnings, Payout } = require('../models/commission');
 const { DailyReport, WeeklyReport, MonthlyReport, Complaint } = require('../models/analytics');
+const { Wallet, Transaction } = require('../models/common');
 
 // Dashboard Statistics
 exports.getDashboardStats = async (req, res) => {
@@ -246,6 +247,112 @@ exports.getMonthlyReport = async (req, res) => {
     res.json(report);
   } catch (e) {
     res.status(500).json({ message: `Failed to get monthly report: ${e.message}` });
+  }
+};
+
+// Combined reports across bookings, commissions, trip history, wallet, and analytics models
+exports.getCombinedReports = async (req, res) => {
+  try {
+    const dayjs = require('dayjs');
+    const period = String(req.query.period || 'daily').toLowerCase();
+    const baseDate = req.query.date ? dayjs(req.query.date) : dayjs();
+
+    let startDate;
+    let endDate;
+    if (period === 'weekly') {
+      startDate = baseDate.startOf('week').toDate();
+      endDate = baseDate.endOf('week').toDate();
+    } else if (period === 'monthly') {
+      startDate = baseDate.startOf('month').toDate();
+      endDate = baseDate.endOf('month').toDate();
+    } else {
+      startDate = baseDate.startOf('day').toDate();
+      endDate = baseDate.endOf('day').toDate();
+    }
+
+    // Bookings summary
+    const bookings = await Booking.find({ createdAt: { $gte: startDate, $lte: endDate } }).lean();
+    const completed = bookings.filter(b => b.status === 'completed');
+    const canceled = bookings.filter(b => b.status === 'canceled');
+    const totalRevenue = completed.reduce((sum, b) => sum + Number(b.fareFinal || 0), 0);
+    const averageFare = completed.length ? totalRevenue / completed.length : 0;
+    const uniqueDrivers = new Set(bookings.map(b => b.driverId).filter(Boolean)).size;
+    const uniquePassengers = new Set(bookings.map(b => b.passengerId).filter(Boolean)).size;
+
+    // Commissions summary
+    const commissionMatch = { tripDate: { $gte: startDate, $lte: endDate } };
+    const adminEarningsAgg = await require('../models/commission').AdminEarnings.aggregate([
+      { $match: commissionMatch },
+      { $group: { _id: null, commission: { $sum: '$commissionEarned' }, gross: { $sum: '$grossFare' } } }
+    ]);
+    const driverEarningsAgg = await require('../models/commission').DriverEarnings.aggregate([
+      { $match: commissionMatch },
+      { $group: { _id: null, grossFare: { $sum: '$grossFare' }, commissionAmount: { $sum: '$commissionAmount' }, netEarnings: { $sum: '$netEarnings' } } }
+    ]);
+
+    // Trip history summary
+    const trips = await TripHistory.find({ createdAt: { $gte: startDate, $lte: endDate } }).lean();
+    const tripEvents = trips.length;
+    const tripDistance = trips.reduce((s, t) => s + Number(t.distance || 0), 0);
+    const tripDuration = trips.reduce((s, t) => s + Number(t.duration || 0), 0);
+
+    // Wallet summary
+    const txMatch = { createdAt: { $gte: startDate, $lte: endDate } };
+    const txAgg = await Transaction.aggregate([
+      { $match: txMatch },
+      { $group: { _id: { role: '$role', type: '$type' }, count: { $sum: 1 }, total: { $sum: '$amount' } } }
+    ]);
+    const driverBalanceAgg = await Wallet.aggregate([
+      { $match: { role: 'driver' } },
+      { $group: { _id: null, total: { $sum: '$balance' } } }
+    ]);
+    const passengerBalanceAgg = await Wallet.aggregate([
+      { $match: { role: 'passenger' } },
+      { $group: { _id: null, total: { $sum: '$balance' } } }
+    ]);
+
+    // Precomputed analytics snapshot if available
+    let analyticsSnapshot = null;
+    if (period === 'daily') {
+      analyticsSnapshot = await DailyReport.findOne({ date: dayjs(startDate).startOf('day').toDate() }).lean();
+    } else if (period === 'weekly') {
+      analyticsSnapshot = await WeeklyReport.findOne({ weekStart: dayjs(startDate).startOf('week').toDate() }).lean();
+    } else {
+      analyticsSnapshot = await MonthlyReport.findOne({ month: baseDate.month() + 1, year: baseDate.year() }).lean();
+    }
+
+    res.json({
+      period,
+      range: { start: startDate, end: endDate },
+      bookings: {
+        total: bookings.length,
+        completed: completed.length,
+        canceled: canceled.length,
+        totalRevenue,
+        averageFare,
+        uniqueDrivers,
+        uniquePassengers
+      },
+      commissions: {
+        admin: { commission: adminEarningsAgg[0]?.commission || 0, grossFare: adminEarningsAgg[0]?.gross || 0 },
+        drivers: driverEarningsAgg[0] || { grossFare: 0, commissionAmount: 0, netEarnings: 0 }
+      },
+      tripHistory: {
+        events: tripEvents,
+        totalDistanceKm: tripDistance,
+        totalDurationMinutes: tripDuration
+      },
+      wallet: {
+        transactions: txAgg,
+        totals: {
+          driverBalances: driverBalanceAgg[0]?.total || 0,
+          passengerBalances: passengerBalanceAgg[0]?.total || 0
+        }
+      },
+      analytics: analyticsSnapshot || null
+    });
+  } catch (e) {
+    res.status(500).json({ message: `Failed to get combined reports: ${e.message}` });
   }
 };
 

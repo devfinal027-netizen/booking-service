@@ -242,8 +242,20 @@ module.exports = {
       if (!targetDriverId) return res.status(400).json({ message: 'driverId is required for admin to set preference' });
       
       let updated;
-      if (action === 'remove') {
+      if (action === 'remove' || action === 'unset' || action === 'toggle') {
+        if (action === 'toggle') {
+          // Toggle: if currently selected -> remove; else -> add
+          const existing = await require('../models/userModels').Driver.findById(String(targetDriverId)).select({ paymentPreferences: 1 }).lean();
+          const has = existing && Array.isArray(existing.paymentPreferences)
+            ? existing.paymentPreferences.map(String).includes(String(paymentOptionId))
+            : false;
+          action = has ? 'remove' : 'add';
+        }
+        if (action === 'remove') {
         updated = await paymentService.removeDriverPaymentPreference(targetDriverId, paymentOptionId);
+        } else {
+          updated = await paymentService.setDriverPaymentPreference(targetDriverId, paymentOptionId);
+        }
       } else {
         updated = await paymentService.setDriverPaymentPreference(targetDriverId, paymentOptionId);
       }

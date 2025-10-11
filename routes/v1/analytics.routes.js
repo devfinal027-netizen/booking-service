@@ -13,6 +13,7 @@ router.get('/reports/monthly', authenticate, authorize('admin', 'superadmin'), c
 
 // Driver Earnings Management
 router.get('/earnings/driver', authenticate, authorize('driver', 'admin', 'superadmin'), ctrl.getDriverEarnings);
+router.get('/reports/combined', authenticate, authorize('admin','superadmin','staff'), ctrl.getCombinedReports);
 
 // Commission Management - Admin only
 router.post('/commission', authenticate, authorize('admin', 'superadmin'), ctrl.setCommission);

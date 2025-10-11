@@ -26,7 +26,7 @@ async function emitActiveBookings(socket) {
 
     // Enrich bookings with driver snapshots when assigned but only fetch for bookings missing driver details
     const uniqueDriverIds = [...new Set(activeBookings
-      .filter(b => b && b.driverId && !b.driver)
+      .filter(b => b && b.driverId)
       .map(b => b.driverId)
     )];
     const driverMap = {};
@@ -41,7 +41,7 @@ async function emitActiveBookings(socket) {
 
     const enriched = activeBookings.map(b => ({
       ...b,
-      driver: b.driver || (b.driverId ? driverMap[String(b.driverId)] : undefined)
+      driver: (b.driverId ? driverMap[String(b.driverId)] : undefined) || b.driver
     }));
 
     for (const booking of enriched) {
@@ -56,7 +56,7 @@ async function emitActiveBookings(socket) {
     if (user.phone) passengerPayload.phone = user.phone;
     if (user.email) passengerPayload.email = user.email;
 
-    const uniqueDrivers = Object.values(driverMap);
+    const uniqueDrivers = Object.values(driverMap).filter(Boolean);
     const topLevelDriver = uniqueDrivers.length === 1 ? uniqueDrivers[0] : undefined;
 
     socket.emit('booking:active_snapshot', {
