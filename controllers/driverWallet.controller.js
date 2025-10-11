@@ -154,7 +154,19 @@ exports.adminListWallets = async (req, res) => {
       }
     } catch (_) {}
 
-    return res.json({ items: enriched, page, pageSize, total });
+    // Flatten format to match single-wallet endpoint style
+    const flattened = enriched.map(w => ({
+      role: w.role,
+      balance: w.balance,
+      totalEarnings: w.totalEarnings || 0,
+      currency: w.currency || 'ETB',
+      id: (w.user && w.user.id) || String(w.userId),
+      name: w.user && w.user.name,
+      phone: w.user && w.user.phone,
+      email: w.user && w.user.email
+    }));
+
+    return res.json({ items: flattened, page, pageSize, total });
   } catch (e) { return res.status(500).json({ message: e.message }); }
 };
 
