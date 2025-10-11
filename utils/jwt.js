@@ -1,5 +1,4 @@
 const jwt = require('jsonwebtoken');
-const { Passenger, Driver, Staff, Admin } = require('../models/userModels');
 
 function getFirstEnv(...names) {
   for (const name of names) {
@@ -44,38 +43,7 @@ function verifyExternalToken(token, options = {}) {
   return verified;
 }
 
-function decodeExternalToken(token) {
-  const raw = cleanToken(token);
-  if (!raw) {
-    const err = new Error('Token is required');
-    err.code = 'TOKEN_REQUIRED';
-    throw err;
-  }
-  return jwt.decode(raw, { complete: false });
-}
-
-async function resolveEntityFromToken(token) {
-  const decoded = verifyExternalToken(token);
-  const type = String(decoded.type || '').toLowerCase();
-  const id = decoded.id;
-  if (!id) {
-    const err = new Error('Token missing id claim');
-    err.code = 'TOKEN_INVALID';
-    throw err;
-  }
-  switch (type) {
-    case 'passenger':
-      return { type: 'passenger', entity: await Passenger.findById(id).lean(), claims: decoded };
-    case 'driver':
-      return { type: 'driver', entity: await Driver.findById(id).lean(), claims: decoded };
-    case 'staff':
-      return { type: 'staff', entity: await Staff.findById(id).lean(), claims: decoded };
-    case 'admin':
-      return { type: 'admin', entity: await Admin.findById(id).lean(), claims: decoded };
-    default:
-      return { type: type || 'unknown', entity: null, claims: decoded };
-  }
-}
+// decodeExternalToken and resolveEntityFromToken removed; not needed in Booking service
 
 function scheduleTokenExpiryDisconnect(socket, decoded) {
   if (!decoded || !decoded.exp) return;
@@ -120,5 +88,5 @@ async function socketAuth(socket, next) {
   }
 }
 
-module.exports = { socketAuth, verifyExternalToken, decodeExternalToken, resolveEntityFromToken };
+module.exports = { socketAuth, verifyExternalToken };
 
