@@ -1,42 +1,49 @@
-const PaymentOption = require('../models/paymentOption');
 const { Driver } = require('../models/userModels');
 
-async function getPaymentOptions() {
-  return PaymentOption.find({}).select({ name: 1, logo: 1 }).sort({ name: 1 }).lean();
+// Static payment partners (normalization removed) - provided by user
+const ALLOWED_PAYMENT_METHODS = [
+  { id: 'telebirr', name: 'Telebirr', description: 'Telebirr is a mobile money service provider in Ethiopia', input: 'phone number', type: 'MOBILE_MONEY' },
+  { id: 'cbebirr', name: 'Cbe Birr', description: 'CBE Birr is a mobile money service provider in Ethiopia', input: 'phone number', type: 'MOBILE_MONEY' },
+  { id: 'mpesa', name: 'Mpesa', description: 'Mpsea is a mobile money service provider in Ethiopia by Safaricom', input: 'phone number', type: 'MOBILE_MONEY' },
+  { id: 'cbe', name: 'Commercial Bank of Ethiopia', description: 'Commercial Bank of Ethiopia is the largest bank Ethiopia', input: 'account number,phone number', type: 'BANK' },
+  { id: 'D‑MONEY', name: 'D‑Money', description: 'Mobile money in Djibouti', input: 'phone number', type: 'MOBILE_MONEY' },
+  { id: 'WAFFI', name: 'Waffi', description: 'Mobile money in Djibouti', input: 'phone number', type: 'MOBILE_MONEY' },
+  { id: 'CAC', name: 'CAC', description: 'Mobile money in Djibouti', input: 'phone number', type: 'MOBILE_MONEY' }
+];
+
+function normalizeId(v) {
+  return String(v || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
 }
 
-async function createPaymentOption({ name, logo }) {
-  if (!name || String(name).trim().length === 0) {
-    const err = new Error('name is required');
-    err.status = 400;
-    throw err;
-  }
-  const exists = await PaymentOption.findOne({ name: String(name).trim() }).lean();
-  if (exists) {
-    const err = new Error('Payment option already exists');
-    err.status = 409;
-    throw err;
-  }
-  const row = await PaymentOption.create({ name: String(name).trim(), logo });
-  return { id: String(row._id), name: row.name, logo: row.logo };
+function findMethodByIdLoose(id) {
+  const target = normalizeId(id);
+  return ALLOWED_PAYMENT_METHODS.find(m => normalizeId(m.id) === target) || null;
+}
+
+async function getPaymentOptions() {
+  return ALLOWED_PAYMENT_METHODS;
+}
+
+async function createPaymentOption() {
+  const err = new Error('Payment options are fixed and cannot be created');
+  err.status = 405;
+  throw err;
 }
 
 async function setDriverPaymentPreference(driverId, paymentOptionId, options = {}) {
   const logger = require('../utils/logger');
-  const opt = await PaymentOption.findById(paymentOptionId).lean();
-  if (!opt) {
-    const err = new Error('Payment option not found');
-    try { logger.warn('[payment] payment option not found', { paymentOptionId }); } catch (_) {}
-    err.status = 404;
-    throw err;
-  }
+  // Accept paymentOptionId as method id (normalization removed)
+  const opt = findMethodByIdLoose(paymentOptionId);
+  if (!opt) { const e = new Error('Payment option not found'); e.status = 404; throw e; }
 
   // Try update by internal id - add to paymentPreferences array if not already present
   let updated = await Driver.findByIdAndUpdate(
     String(driverId), 
-    { $addToSet: { paymentPreferences: opt._id } }, 
+    { $addToSet: { paymentPreferences: opt.id } }, 
     { new: true }
-  ).populate({ path: 'paymentPreferences', select: { name: 1, logo: 1 } });
+  );
 
   // Fallback: by externalId if internal id did not match
   if (!updated) {
@@ -45,9 +52,9 @@ async function setDriverPaymentPreference(driverId, paymentOptionId, options = {
     if (existingByExternal && existingByExternal._id) {
       updated = await Driver.findByIdAndUpdate(
         String(existingByExternal._id), 
-        { $addToSet: { paymentPreferences: opt._id } }, 
+        { $addToSet: { paymentPreferences: opt.id } }, 
         { new: true }
-      ).populate({ path: 'paymentPreferences', select: { name: 1, logo: 1 } });
+      );
     }
   }
 
@@ -74,9 +81,9 @@ async function setDriverPaymentPreference(driverId, paymentOptionId, options = {
         await Driver.updateOne({ _id: String(ext.id) }, { $set: payload }, { upsert: true });
         updated = await Driver.findByIdAndUpdate(
           String(ext.id), 
-          { $addToSet: { paymentPreferences: opt._id } }, 
+          { $addToSet: { paymentPreferences: opt.id } }, 
           { new: true }
-        ).populate({ path: 'paymentPreferences', select: { name: 1, logo: 1 } });
+        );
       } else {
         try { logger.warn('[payment] user-service did not return driver', { driverId }); } catch (_) {}
       }
@@ -93,10 +100,10 @@ async function setDriverPaymentPreference(driverId, paymentOptionId, options = {
       { _id: minimalId },
       { 
         $setOnInsert: { _id: minimalId, externalId: minimalId, rating: 5.0 },
-        $addToSet: { paymentPreferences: opt._id }
+        $addToSet: { paymentPreferences: opt.id }
       },
       { new: true, upsert: true }
-    ).populate({ path: 'paymentPreferences', select: { name: 1, logo: 1 } });
+    );
   }
 
   if (!updated) {
@@ -110,20 +117,15 @@ async function setDriverPaymentPreference(driverId, paymentOptionId, options = {
 
 async function removeDriverPaymentPreference(driverId, paymentOptionId, options = {}) {
   const logger = require('../utils/logger');
-  const opt = await PaymentOption.findById(paymentOptionId).lean();
-  if (!opt) {
-    const err = new Error('Payment option not found');
-    try { logger.warn('[payment] payment option not found', { paymentOptionId }); } catch (_) {}
-    err.status = 404;
-    throw err;
-  }
+  const opt = findMethodByIdLoose(paymentOptionId);
+  if (!opt) { const e = new Error('Payment option not found'); e.status = 404; throw e; }
 
   // Try update by internal id - remove from paymentPreferences array
   let updated = await Driver.findByIdAndUpdate(
     String(driverId), 
-    { $pull: { paymentPreferences: opt._id } }, 
+    { $pull: { paymentPreferences: opt.id } }, 
     { new: true }
-  ).populate({ path: 'paymentPreferences', select: { name: 1, logo: 1 } });
+  );
 
   // Fallback: by externalId if internal id did not match
   if (!updated) {
@@ -132,9 +134,9 @@ async function removeDriverPaymentPreference(driverId, paymentOptionId, options 
     if (existingByExternal && existingByExternal._id) {
       updated = await Driver.findByIdAndUpdate(
         String(existingByExternal._id), 
-        { $pull: { paymentPreferences: opt._id } }, 
+        { $pull: { paymentPreferences: opt.id } }, 
         { new: true }
-      ).populate({ path: 'paymentPreferences', select: { name: 1, logo: 1 } });
+      );
     }
   }
 
