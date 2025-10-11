@@ -2,16 +2,26 @@ const jwt = require('jsonwebtoken');
 
 const authenticate = (req, res, next) => {
   const raw = req.headers.authorization || '';
-  const token = String(raw).replace(/^\s*Bearer\s+/i, '');
+  const token = String(raw).replace(/^\s*(Bearer|JWT|Token)\s+/i, '');
   if (!token) return res.status(401).json({ message: 'Unauthorized' });
   try {
-    const claims = jwt.verify(token, process.env.JWT_SECRET, {
-      issuer: process.env.TOKEN_ISSUER || process.env.JWT_ISSUER,
-      audience: process.env.TOKEN_AUDIENCE || process.env.JWT_AUDIENCE,
-    });
+    const verifyOptions = {};
+    if (process.env.TOKEN_ISSUER || process.env.JWT_ISSUER) {
+      verifyOptions.issuer = process.env.TOKEN_ISSUER || process.env.JWT_ISSUER;
+    }
+    if (process.env.TOKEN_AUDIENCE || process.env.JWT_AUDIENCE) {
+      verifyOptions.audience = process.env.TOKEN_AUDIENCE || process.env.JWT_AUDIENCE;
+    }
+    const claims = jwt.verify(token, process.env.JWT_SECRET, verifyOptions);
     req.user = claims;
     return next();
   } catch (e) {
+    if (process.env.AUTH_DEBUG === '1') {
+      console.log('Auth verify failed', {
+        error: e && e.message,
+        path: req.originalUrl || req.url,
+      });
+    }
     return res.status(401).json({ message: 'Invalid token' });
   }
 };
