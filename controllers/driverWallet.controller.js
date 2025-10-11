@@ -107,6 +107,52 @@ exports.adminListWallets = async (req, res) => {
     const minBalance = req.query.minBalance != null ? Number(req.query.minBalance) : undefined;
     const driverId = req.query.driverId ? String(req.query.driverId) : undefined;
 
+    // If driverId is provided, return single-wallet detail format (wallet + transactions)
+    if (driverId) {
+      const limit = Math.min(Math.max(parseInt(req.query.limit || '100', 10), 1), 500);
+      const [wallet, txs] = await Promise.all([
+        Wallet.findOne({ userId: driverId, role: 'driver' }).lean(),
+        Transaction.find({ userId: driverId, role: 'driver' }).sort({ createdAt: -1 }).limit(limit).lean(),
+      ]);
+      // Resolve user details
+      let user;
+      try {
+        const { Driver } = require('../models/userModels');
+        const { Types } = require('mongoose');
+        if (Types.ObjectId.isValid(driverId)) {
+          const d = await Driver.findById(driverId).select({ _id: 1, name: 1, phone: 1, email: 1 }).lean();
+          if (d) user = { id: String(d._id), name: d.name, phone: d.phone, email: d.email };
+        }
+        if (!user) {
+          const d = await Driver.findOne({ externalId: String(driverId) }).select({ _id: 1, name: 1, phone: 1, email: 1, externalId: 1 }).lean();
+          if (d) user = { id: String(d._id), name: d.name, phone: d.phone, email: d.email, externalId: String(d.externalId) };
+        }
+      } catch (_) {}
+      if (!user) {
+        try {
+          const { getDriverById } = require('../integrations/userServiceClient');
+          const headers = req.headers && req.headers.authorization ? { Authorization: req.headers.authorization } : undefined;
+          let info = await getDriverById(driverId, { headers });
+          if ((!info || !info.name || !info.phone) && process.env.AUTH_SERVICE_BEARER) {
+            info = await getDriverById(driverId, { headers: undefined });
+          }
+          if (info) user = { id: String(info.id), name: info.name, phone: info.phone, email: info.email };
+        } catch (_) {}
+      }
+      const baseWallet = wallet || { userId: driverId, role: 'driver', balance: 0, totalEarnings: 0, currency: 'ETB' };
+      const flattenedWallet = {
+        role: baseWallet.role,
+        balance: baseWallet.balance,
+        totalEarnings: baseWallet.totalEarnings || 0,
+        currency: baseWallet.currency || 'ETB',
+        id: (user && user.id) || String(baseWallet.userId),
+        name: user && user.name,
+        phone: user && user.phone,
+        email: user && user.email
+      };
+      return res.json({ wallet: flattenedWallet, transactions: txs });
+    }
+
     const filter = { role: 'driver' };
     if (driverId) filter.userId = driverId;
     if (Number.isFinite(minBalance)) filter.balance = { $gte: minBalance };
