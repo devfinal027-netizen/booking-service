@@ -1,4 +1,5 @@
 const dayjs = require('dayjs');
+const logger = require('../utils/logger');
 const { Booking, TripHistory } = require('../models/bookingModels');
 const { Driver, Passenger } = require('../models/userModels');
 const { Commission, DriverEarnings, AdminEarnings, Payout, RewardRate } = require('../models/commission');
@@ -103,6 +104,7 @@ exports.getDashboardStats = async (req, res) => {
       }
     });
   } catch (e) {
+    logger.error('[analytics.dashboard] failed', { error: e && e.message, stack: e && e.stack });
     res.status(500).json({ message: `Failed to get dashboard stats: ${e.message}` });
   }
 };
@@ -123,6 +125,7 @@ exports.getDailyReport = async (req, res) => {
       const rides = await Booking.find({
         createdAt: { $gte: targetDate, $lt: nextDay }
       }).populate('driverId passengerId');
+      logger.info('[analytics.daily] fetched rides', { count: rides.length, targetDate });
 
       const totalRevenue = rides
         .filter(r => r.status === 'completed')
@@ -161,6 +164,7 @@ exports.getDailyReport = async (req, res) => {
     const ridesForDetails = await Booking.find({
       createdAt: { $gte: targetDate, $lt: nextDay }
     }).populate('driverId passengerId').lean();
+    logger.info('[analytics.daily] enrich details', { count: ridesForDetails.length });
 
     const rideDetails = ridesForDetails.map(r => ({
       bookingId: r._id,
@@ -186,6 +190,7 @@ exports.getDailyReport = async (req, res) => {
       rideDetails
     });
   } catch (e) {
+    logger.error('[analytics.daily] failed', { error: e && e.message, stack: e && e.stack });
     res.status(500).json({ message: `Failed to get daily report: ${e.message}` });
   }
 };
@@ -201,6 +206,7 @@ exports.getWeeklyReport = async (req, res) => {
     const rides = await Booking.find({ createdAt: { $gte: startDate, $lte: endDate } })
       .populate('driverId passengerId')
       .lean();
+    logger.info('[analytics.weekly] rides', { count: rides.length, startDate, endDate });
 
     const completed = rides.filter(r => r.status === 'completed');
     const totalRevenue = completed.reduce((sum, r) => sum + Number(r.fareFinal || 0), 0);
@@ -220,6 +226,7 @@ exports.getWeeklyReport = async (req, res) => {
       { $sort: { net: -1 } },
       { $limit: 10 }
     ]);
+    logger.info('[analytics.weekly] topDriversAgg', { count: topDriversAgg.length });
 
     // Enrich top drivers with name/phone
     let topDrivers = topDriversAgg;
@@ -273,6 +280,7 @@ exports.getWeeklyReport = async (req, res) => {
       rideDetails
     });
   } catch (e) {
+    logger.error('[analytics.weekly] failed', { error: e && e.message, stack: e && e.stack });
     res.status(500).json({ message: `Failed to get weekly report: ${e.message}` });
   }
 };
@@ -321,6 +329,7 @@ exports.getMonthlyReport = async (req, res) => {
     const ridesForDetails = await Booking.find({
       createdAt: { $gte: startDate, $lte: endDate }
     }).populate('driverId passengerId').lean();
+    logger.info('[analytics.monthly] enrich details', { count: ridesForDetails.length, month: targetMonth, year: targetYear });
 
     const rideDetails = ridesForDetails.map(r => ({
       bookingId: r._id,
@@ -346,6 +355,7 @@ exports.getMonthlyReport = async (req, res) => {
       rideDetails
     });
   } catch (e) {
+    logger.error('[analytics.monthly] failed', { error: e && e.message, stack: e && e.stack });
     res.status(500).json({ message: `Failed to get monthly report: ${e.message}` });
   }
 };
@@ -372,6 +382,7 @@ exports.getCombinedReports = async (req, res) => {
 
     // Bookings summary
     const bookings = await Booking.find({ createdAt: { $gte: startDate, $lte: endDate } }).lean();
+    logger.info('[analytics.combined] bookings', { count: bookings.length, startDate, endDate });
     const completed = bookings.filter(b => b.status === 'completed');
     const canceled = bookings.filter(b => b.status === 'canceled');
     const totalRevenue = completed.reduce((sum, b) => sum + Number(b.fareFinal || 0), 0);
@@ -389,6 +400,7 @@ exports.getCombinedReports = async (req, res) => {
       { $match: commissionMatch },
       { $group: { _id: null, grossFare: { $sum: '$grossFare' }, commissionAmount: { $sum: '$commissionAmount' }, netEarnings: { $sum: '$netEarnings' } } }
     ]);
+    logger.info('[analytics.combined] earningsAgg', { admin: adminEarningsAgg[0], driver: driverEarningsAgg[0] });
 
     // Driver earnings breakdown by driver with enrichment
     const driverBreakdownAgg = await require('../models/commission').DriverEarnings.aggregate([
@@ -415,6 +427,7 @@ exports.getCombinedReports = async (req, res) => {
 
     // Trip history summary
     const trips = await TripHistory.find({ createdAt: { $gte: startDate, $lte: endDate } }).lean();
+    logger.info('[analytics.combined] trips', { count: trips.length });
     const tripEvents = trips.length;
     const tripDistance = trips.reduce((s, t) => s + Number(t.distance || 0), 0);
     const tripDuration = trips.reduce((s, t) => s + Number(t.duration || 0), 0);
@@ -448,6 +461,7 @@ exports.getCombinedReports = async (req, res) => {
     const ridesForDetails = await Booking.find({ createdAt: { $gte: startDate, $lte: endDate } })
       .populate('driverId passengerId')
       .lean();
+    logger.info('[analytics.combined] rideDetails', { count: ridesForDetails.length });
     const rideCommissionRate = Number(process.env.COMMISSION_RATE || 15);
     const rideDetails = ridesForDetails.map(r => ({
       bookingId: r._id,
@@ -500,6 +514,7 @@ exports.getCombinedReports = async (req, res) => {
       rideDetails
     });
   } catch (e) {
+    logger.error('[analytics.combined] failed', { error: e && e.message, stack: e && e.stack });
     res.status(500).json({ message: `Failed to get combined reports: ${e.message}` });
   }
 };
@@ -859,6 +874,7 @@ exports.getFinanceOverview = async (req, res) => {
       mostProfitableRoutes: profitableRoutes
     });
   } catch (e) {
+    logger.error('[analytics.finance] failed', { error: e && e.message, stack: e && e.stack });
     res.status(500).json({ message: `Failed to get finance overview: ${e.message}` });
   }
 };
