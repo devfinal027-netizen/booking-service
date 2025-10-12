@@ -227,8 +227,8 @@ exports.getWeeklyReport = async (req, res) => {
       const ids = topDriversAgg.map(d => String(d._id)).filter(Boolean);
       const { Types } = require('mongoose');
       const valid = ids.filter(id => Types.ObjectId.isValid(id));
-      const local = valid.length ? await Driver.find({ _id: { $in: valid } }).select({ _id: 1, name: 1, phone: 1 }).lean() : [];
-      const lmap = Object.fromEntries(local.map(d => [String(d._id), { name: d.name, phone: d.phone }]));
+      const local = valid.length ? await Driver.find({ _id: { $in: valid } }).select({ _id: 1, name: 1, phone: 1, email: 1 }).lean() : [];
+      const lmap = Object.fromEntries(local.map(d => [String(d._id), { name: d.name, phone: d.phone, email: d.email }]));
       topDrivers = topDriversAgg.map(d => ({
         driverId: String(d._id),
         rides: d.rides,
@@ -236,7 +236,8 @@ exports.getWeeklyReport = async (req, res) => {
         commission: d.commission,
         net: d.net,
         name: lmap[String(d._id)]?.name,
-        phone: lmap[String(d._id)]?.phone
+        phone: lmap[String(d._id)]?.phone,
+        email: lmap[String(d._id)]?.email
       }));
     } catch (_) {}
 
@@ -793,8 +794,8 @@ exports.getFinanceOverview = async (req, res) => {
       const { Types } = require('mongoose');
       const ids = topDriversRaw.map(d => String(d._id));
       const valid = ids.filter(id => Types.ObjectId.isValid(id));
-      const local = valid.length ? await Driver.find({ _id: { $in: valid } }).select({ _id: 1, name: 1, phone: 1 }).lean() : [];
-      const lmap = Object.fromEntries(local.map(d => [String(d._id), { name: d.name, phone: d.phone }]));
+      const local = valid.length ? await Driver.find({ _id: { $in: valid } }).select({ _id: 1, name: 1, phone: 1, email: 1 }).lean() : [];
+      const lmap = Object.fromEntries(local.map(d => [String(d._id), { name: d.name, phone: d.phone, email: d.email }]));
       const unresolved = ids.filter(id => !lmap[id]);
       let emap = {};
       if (unresolved.length) {
@@ -802,13 +803,14 @@ exports.getFinanceOverview = async (req, res) => {
           const { getDriversByIds } = require('../integrations/userServiceClient');
           const headers = req.headers && req.headers.authorization ? { Authorization: req.headers.authorization } : undefined;
           const infos = await getDriversByIds(unresolved, { headers });
-          emap = Object.fromEntries((infos || []).map(i => [String(i.id), { name: i.name, phone: i.phone }]));
+          emap = Object.fromEntries((infos || []).map(i => [String(i.id), { name: i.name, phone: i.phone, email: i.email }]));
         } catch (_) {}
       }
       topDrivers = topDriversRaw.map(d => ({
         ...d,
         name: (lmap[String(d._id)] || emap[String(d._id)] || {}).name,
-        phone: (lmap[String(d._id)] || emap[String(d._id)] || {}).phone
+        phone: (lmap[String(d._id)] || emap[String(d._id)] || {}).phone,
+        email: (lmap[String(d._id)] || emap[String(d._id)] || {}).email
       }));
     } catch (_) {}
 
