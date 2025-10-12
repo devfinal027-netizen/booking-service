@@ -113,6 +113,7 @@ exports.getDailyReport = async (req, res) => {
     const { date } = req.query;
     const targetDate = date ? dayjs(date).startOf('day').toDate() : dayjs().startOf('day').toDate();
     const nextDay = dayjs(targetDate).add(1, 'day').toDate();
+    const commissionRate = Number(process.env.COMMISSION_RATE || 15);
 
     // Get or create daily report
     let report = await DailyReport.findOne({ date: targetDate });
@@ -142,20 +143,46 @@ exports.getDailyReport = async (req, res) => {
         completedRides: completedCountD,
         canceledRides: rides.filter(r => r.status === 'canceled').length,
         averageFare: Number.isFinite(avgFareD) ? avgFareD : 0,
+        // Persist a basic snapshot; response below will enrich with user details on-the-fly
         rideDetails: rides.map(r => ({
           bookingId: r._id,
-          driverId: r.driverId,
-          passengerId: r.passengerId,
-          fare: r.fareFinal || r.fareEstimated,
-          commission: (r.fareFinal || r.fareEstimated) * 0.15, // Default 15% commission
+          driverId: String(r.driverId?._id || r.driverId || ''),
+          passengerId: String(r.passengerId?._id || r.passengerId || ''),
+          fare: Number(r.fareFinal || r.fareEstimated || 0),
+          commission: Number(r.fareFinal || r.fareEstimated || 0) * (commissionRate / 100),
           status: r.status,
           vehicleType: r.vehicleType,
-          distanceKm: r.distanceKm
+          distanceKm: Number(r.distanceKm || 0)
         }))
       });
     }
 
-    res.json(report);
+    // Always enrich rideDetails for response with user names/phones
+    const ridesForDetails = await Booking.find({
+      createdAt: { $gte: targetDate, $lt: nextDay }
+    }).populate('driverId passengerId').lean();
+
+    const rideDetails = ridesForDetails.map(r => ({
+      bookingId: r._id,
+      driverId: String(r.driverId?._id || r.driverId || ''),
+      driverName: r.driverId && typeof r.driverId === 'object' ? r.driverId.name : r.driverName,
+      driverPhone: r.driverId && typeof r.driverId === 'object' ? r.driverId.phone : r.driverPhone,
+      passengerId: String(r.passengerId?._id || r.passengerId || ''),
+      passengerName: r.passengerId && typeof r.passengerId === 'object' ? r.passengerId.name : r.passengerName,
+      passengerPhone: r.passengerId && typeof r.passengerId === 'object' ? r.passengerId.phone : r.passengerPhone,
+      fare: Number(r.fareFinal || r.fareEstimated || 0),
+      commission: Number(r.fareFinal || r.fareEstimated || 0) * (commissionRate / 100),
+      status: r.status,
+      vehicleType: r.vehicleType,
+      distanceKm: Number(r.distanceKm || 0),
+      _id: r._id
+    }));
+
+    const payload = report && typeof report.toObject === 'function' ? report.toObject() : report;
+    res.json({
+      ...payload,
+      rideDetails
+    });
   } catch (e) {
     res.status(500).json({ message: `Failed to get daily report: ${e.message}` });
   }
@@ -166,9 +193,12 @@ exports.getWeeklyReport = async (req, res) => {
     const { weekStart } = req.query;
     const startDate = weekStart ? dayjs(weekStart).startOf('week').toDate() : dayjs().startOf('week').toDate();
     const endDate = dayjs(startDate).endOf('week').toDate();
+    const commissionRate = Number(process.env.COMMISSION_RATE || 15);
 
     // Always compute from live data for accuracy
-    const rides = await Booking.find({ createdAt: { $gte: startDate, $lte: endDate } }).lean();
+    const rides = await Booking.find({ createdAt: { $gte: startDate, $lte: endDate } })
+      .populate('driverId passengerId')
+      .lean();
 
     const completed = rides.filter(r => r.status === 'completed');
     const totalRevenue = completed.reduce((sum, r) => sum + Number(r.fareFinal || 0), 0);
@@ -182,12 +212,45 @@ exports.getWeeklyReport = async (req, res) => {
     const avgFare = completed.length > 0 ? totalRevenue / completed.length : 0;
 
     // Top drivers by net earnings in the week
-    const topDrivers = await require('../models/commission').DriverEarnings.aggregate([
+    const topDriversAgg = await require('../models/commission').DriverEarnings.aggregate([
       { $match: { tripDate: { $gte: startDate, $lte: endDate } } },
       { $group: { _id: '$driverId', rides: { $sum: 1 }, gross: { $sum: '$grossFare' }, commission: { $sum: '$commissionAmount' }, net: { $sum: '$netEarnings' } } },
       { $sort: { net: -1 } },
       { $limit: 10 }
     ]);
+
+    // Enrich top drivers with name/phone
+    let topDrivers = topDriversAgg;
+    try {
+      const ids = topDriversAgg.map(d => String(d._id)).filter(Boolean);
+      const { Types } = require('mongoose');
+      const valid = ids.filter(id => Types.ObjectId.isValid(id));
+      const local = valid.length ? await Driver.find({ _id: { $in: valid } }).select({ _id: 1, name: 1, phone: 1 }).lean() : [];
+      const lmap = Object.fromEntries(local.map(d => [String(d._id), { name: d.name, phone: d.phone }]));
+      topDrivers = topDriversAgg.map(d => ({
+        ...d,
+        id: String(d._id),
+        name: lmap[String(d._id)]?.name,
+        phone: lmap[String(d._id)]?.phone
+      }));
+    } catch (_) {}
+
+    // Enrich ride details with user information
+    const rideDetails = rides.map(r => ({
+      bookingId: r._id,
+      driverId: String(r.driverId?._id || r.driverId || ''),
+      driverName: r.driverId && typeof r.driverId === 'object' ? r.driverId.name : r.driverName,
+      driverPhone: r.driverId && typeof r.driverId === 'object' ? r.driverId.phone : r.driverPhone,
+      passengerId: String(r.passengerId?._id || r.passengerId || ''),
+      passengerName: r.passengerId && typeof r.passengerId === 'object' ? r.passengerId.name : r.passengerName,
+      passengerPhone: r.passengerId && typeof r.passengerId === 'object' ? r.passengerId.phone : r.passengerPhone,
+      fare: Number(r.fareFinal || r.fareEstimated || 0),
+      commission: Number(r.fareFinal || r.fareEstimated || 0) * (commissionRate / 100),
+      status: r.status,
+      vehicleType: r.vehicleType,
+      distanceKm: Number(r.distanceKm || 0),
+      _id: r._id
+    }));
 
     res.json({
       weekStart: startDate,
@@ -198,7 +261,8 @@ exports.getWeeklyReport = async (req, res) => {
       totalRevenue,
       totalCommission,
       averageFare: Number.isFinite(avgFare) ? avgFare : 0,
-      topDrivers
+      topDrivers,
+      rideDetails
     });
   } catch (e) {
     res.status(500).json({ message: `Failed to get weekly report: ${e.message}` });
@@ -212,6 +276,7 @@ exports.getMonthlyReport = async (req, res) => {
     const targetYear = year ? parseInt(year) : dayjs().year();
     const startDate = dayjs().month(targetMonth - 1).year(targetYear).startOf('month').toDate();
     const endDate = dayjs().month(targetMonth - 1).year(targetYear).endOf('month').toDate();
+    const commissionRate = Number(process.env.COMMISSION_RATE || 15);
 
     let report = await MonthlyReport.findOne({ month: targetMonth, year: targetYear });
     
@@ -244,7 +309,32 @@ exports.getMonthlyReport = async (req, res) => {
       });
     }
 
-    res.json(report);
+    // Enrich response with ride details including user info
+    const ridesForDetails = await Booking.find({
+      createdAt: { $gte: startDate, $lte: endDate }
+    }).populate('driverId passengerId').lean();
+
+    const rideDetails = ridesForDetails.map(r => ({
+      bookingId: r._id,
+      driverId: String(r.driverId?._id || r.driverId || ''),
+      driverName: r.driverId && typeof r.driverId === 'object' ? r.driverId.name : r.driverName,
+      driverPhone: r.driverId && typeof r.driverId === 'object' ? r.driverId.phone : r.driverPhone,
+      passengerId: String(r.passengerId?._id || r.passengerId || ''),
+      passengerName: r.passengerId && typeof r.passengerId === 'object' ? r.passengerId.name : r.passengerName,
+      passengerPhone: r.passengerId && typeof r.passengerId === 'object' ? r.passengerId.phone : r.passengerPhone,
+      fare: Number(r.fareFinal || r.fareEstimated || 0),
+      commission: Number(r.fareFinal || r.fareEstimated || 0) * (commissionRate / 100),
+      status: r.status,
+      vehicleType: r.vehicleType,
+      distanceKm: Number(r.distanceKm || 0),
+      _id: r._id
+    }));
+
+    const payload = report && typeof report.toObject === 'function' ? report.toObject() : report;
+    res.json({
+      ...payload,
+      rideDetails
+    });
   } catch (e) {
     res.status(500).json({ message: `Failed to get monthly report: ${e.message}` });
   }
@@ -290,6 +380,29 @@ exports.getCombinedReports = async (req, res) => {
       { $group: { _id: null, grossFare: { $sum: '$grossFare' }, commissionAmount: { $sum: '$commissionAmount' }, netEarnings: { $sum: '$netEarnings' } } }
     ]);
 
+    // Driver earnings breakdown by driver with enrichment
+    const driverBreakdownAgg = await require('../models/commission').DriverEarnings.aggregate([
+      { $match: commissionMatch },
+      { $group: { _id: '$driverId', grossFare: { $sum: '$grossFare' }, commissionAmount: { $sum: '$commissionAmount' }, netEarnings: { $sum: '$netEarnings' } } },
+      { $sort: { netEarnings: -1 } }
+    ]);
+    let driverBreakdown = driverBreakdownAgg;
+    try {
+      const ids = driverBreakdownAgg.map(d => String(d._id)).filter(Boolean);
+      const { Types } = require('mongoose');
+      const valid = ids.filter(id => Types.ObjectId.isValid(id));
+      const local = valid.length ? await Driver.find({ _id: { $in: valid } }).select({ _id: 1, name: 1, phone: 1 }).lean() : [];
+      const lmap = Object.fromEntries(local.map(d => [String(d._id), { name: d.name, phone: d.phone }]));
+      driverBreakdown = driverBreakdownAgg.map(d => ({
+        driverId: String(d._id),
+        name: lmap[String(d._id)]?.name,
+        phone: lmap[String(d._id)]?.phone,
+        grossFare: d.grossFare,
+        commissionAmount: d.commissionAmount,
+        netEarnings: d.netEarnings
+      }));
+    } catch (_) {}
+
     // Trip history summary
     const trips = await TripHistory.find({ createdAt: { $gte: startDate, $lte: endDate } }).lean();
     const tripEvents = trips.length;
@@ -321,6 +434,27 @@ exports.getCombinedReports = async (req, res) => {
       analyticsSnapshot = await MonthlyReport.findOne({ month: baseDate.month() + 1, year: baseDate.year() }).lean();
     }
 
+    // Enriched ride details for period (driver & passenger info)
+    const ridesForDetails = await Booking.find({ createdAt: { $gte: startDate, $lte: endDate } })
+      .populate('driverId passengerId')
+      .lean();
+    const rideCommissionRate = Number(process.env.COMMISSION_RATE || 15);
+    const rideDetails = ridesForDetails.map(r => ({
+      bookingId: r._id,
+      driverId: String(r.driverId?._id || r.driverId || ''),
+      driverName: r.driverId && typeof r.driverId === 'object' ? r.driverId.name : r.driverName,
+      driverPhone: r.driverId && typeof r.driverId === 'object' ? r.driverId.phone : r.driverPhone,
+      passengerId: String(r.passengerId?._id || r.passengerId || ''),
+      passengerName: r.passengerId && typeof r.passengerId === 'object' ? r.passengerId.name : r.passengerName,
+      passengerPhone: r.passengerId && typeof r.passengerId === 'object' ? r.passengerId.phone : r.passengerPhone,
+      fare: Number(r.fareFinal || r.fareEstimated || 0),
+      commission: Number(r.fareFinal || r.fareEstimated || 0) * (rideCommissionRate / 100),
+      status: r.status,
+      vehicleType: r.vehicleType,
+      distanceKm: Number(r.distanceKm || 0),
+      _id: r._id
+    }));
+
     res.json({
       period,
       range: { start: startDate, end: endDate },
@@ -335,7 +469,10 @@ exports.getCombinedReports = async (req, res) => {
       },
       commissions: {
         admin: { commission: adminEarningsAgg[0]?.commission || 0, grossFare: adminEarningsAgg[0]?.gross || 0 },
-        drivers: driverEarningsAgg[0] || { grossFare: 0, commissionAmount: 0, netEarnings: 0 }
+        drivers: {
+          ...(driverEarningsAgg[0] || { grossFare: 0, commissionAmount: 0, netEarnings: 0 }),
+          byDriver: driverBreakdown
+        }
       },
       tripHistory: {
         events: tripEvents,
@@ -349,7 +486,8 @@ exports.getCombinedReports = async (req, res) => {
           passengerBalances: passengerBalanceAgg[0]?.total || 0
         }
       },
-      analytics: analyticsSnapshot || null
+      analytics: analyticsSnapshot || null,
+      rideDetails
     });
   } catch (e) {
     res.status(500).json({ message: `Failed to get combined reports: ${e.message}` });
