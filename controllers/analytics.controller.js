@@ -1,7 +1,7 @@
 const dayjs = require('dayjs');
 const { Booking, TripHistory } = require('../models/bookingModels');
 const { Driver, Passenger } = require('../models/userModels');
-const { Commission, DriverEarnings, AdminEarnings, Payout } = require('../models/commission');
+const { Commission, DriverEarnings, AdminEarnings, Payout, RewardRate } = require('../models/commission');
 const { DailyReport, WeeklyReport, MonthlyReport, Complaint } = require('../models/analytics');
 const { Wallet, Transaction } = require('../models/common');
 
@@ -749,9 +749,19 @@ exports.getDriverRewards = async (req, res) => {
   try {
     const driverId = req.query.driverId || req.user.id;
     const out = await computeRewardsForUser('driver', driverId);
+    // Apply admin-configured perKm if present
+    try {
+      const cfg = await RewardRate.findOne({ role: 'driver' }).lean();
+      if (cfg && Number.isFinite(cfg.perKm)) {
+        const points = Math.floor((out.totalDistanceKm || 0) * cfg.perKm);
+        out.rewardPoints = points;
+        out.perKm = cfg.perKm;
+        out.currency = cfg.currency || 'ETB';
+      }
+    } catch (_) {}
     res.json({
       driverId: String(driverId),
-      rule: '10 ETB per 2km of completed trips',
+      rule: out.perKm ? `${out.perKm} ${out.currency || 'ETB'} per km` : '10 ETB per 2km of completed trips',
       ...out
     });
   } catch (e) {

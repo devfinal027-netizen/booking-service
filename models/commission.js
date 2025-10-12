@@ -47,9 +47,18 @@ const PayoutSchema = new mongoose.Schema({
   earnings: [{ type: mongoose.Schema.Types.ObjectId, ref: 'DriverEarnings' }]
 }, { timestamps: true, toJSON: { versionKey: false }, toObject: { versionKey: false } });
 
+// Admin-configurable rewards per kilometer
+const RewardRateSchema = new mongoose.Schema({
+  role: { type: String, enum: ['driver','passenger'], required: true, unique: true },
+  perKm: { type: Number, required: true, min: 0 },
+  currency: { type: String, default: 'ETB' },
+  updatedBy: { type: String },
+}, { timestamps: true, toJSON: { versionKey: false }, toObject: { versionKey: false } });
+
 module.exports = {
   Commission: mongoose.model('Commission', CommissionSchema),
   DriverEarnings: mongoose.model('DriverEarnings', DriverEarningsSchema),
   AdminEarnings: mongoose.model('AdminEarnings', AdminEarningsSchema),
-  Payout: mongoose.model('Payout', PayoutSchema)
+  Payout: mongoose.model('Payout', PayoutSchema),
+  RewardRate: mongoose.model('RewardRate', RewardRateSchema)
 };
