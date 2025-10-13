@@ -15,7 +15,13 @@ const DailyReportSchema = new mongoose.Schema({
   rideDetails: [{
     bookingId: { type: mongoose.Schema.Types.ObjectId, ref: 'Booking' },
     driverId: { type: String },
+    driverName: { type: String },
+    driverPhone: { type: String },
+    driverEmail: { type: String },
     passengerId: { type: String },
+    passengerName: { type: String },
+    passengerPhone: { type: String },
+    passengerEmail: { type: String },
     fare: { type: Number },
     commission: { type: Number },
     status: { type: String },
@@ -37,12 +43,44 @@ const WeeklyReportSchema = new mongoose.Schema({
   averageFare: { type: Number, default: 0 },
   completedRides: { type: Number, default: 0 },
   canceledRides: { type: Number, default: 0 },
+  rideDetails: [{
+    bookingId: { type: mongoose.Schema.Types.ObjectId, ref: 'Booking' },
+    driverId: { type: String },
+    driverName: { type: String },
+    driverPhone: { type: String },
+    driverEmail: { type: String },
+    passengerId: { type: String },
+    passengerName: { type: String },
+    passengerPhone: { type: String },
+    passengerEmail: { type: String },
+    fare: { type: Number },
+    commission: { type: Number },
+    status: { type: String },
+    vehicleType: { type: String },
+    distanceKm: { type: Number }
+  }],
   dailyBreakdown: [{ type: mongoose.Schema.Types.ObjectId, ref: 'DailyReport' }]
 }, { timestamps: true, toJSON: { versionKey: false }, toObject: { versionKey: false } });
 
 const MonthlyReportSchema = new mongoose.Schema({
   month: { type: Number, required: true, index: true }, // 1-12
   year: { type: Number, required: true, index: true },
+  rideDetails: [{
+    bookingId: { type: mongoose.Schema.Types.ObjectId, ref: 'Booking' },
+    driverId: { type: String },
+    driverName: { type: String },
+    driverPhone: { type: String },
+    driverEmail: { type: String },
+    passengerId: { type: String },
+    passengerName: { type: String },
+    passengerPhone: { type: String },
+    passengerEmail: { type: String },
+    fare: { type: Number },
+    commission: { type: Number },
+    status: { type: String },
+    vehicleType: { type: String },
+    distanceKm: { type: Number }
+  }],
   totalRides: { type: Number, default: 0 },
   totalRevenue: { type: Number, default: 0 },
   totalCommission: { type: Number, default: 0 },

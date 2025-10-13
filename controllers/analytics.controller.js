@@ -150,7 +150,13 @@ exports.getDailyReport = async (req, res) => {
         rideDetails: rides.map(r => ({
           bookingId: r._id,
           driverId: String(r.driverId?._id || r.driverId || ''),
+          driverName: r.driverId && typeof r.driverId === 'object' ? r.driverId.name : r.driverName,
+          driverPhone: r.driverId && typeof r.driverId === 'object' ? r.driverId.phone : r.driverPhone,
+          driverEmail: r.driverId && typeof r.driverId === 'object' ? r.driverId.email : r.driverEmail,
           passengerId: String(r.passengerId?._id || r.passengerId || ''),
+          passengerName: r.passengerId && typeof r.passengerId === 'object' ? r.passengerId.name : r.passengerName,
+          passengerPhone: r.passengerId && typeof r.passengerId === 'object' ? r.passengerId.phone : r.passengerPhone,
+          passengerEmail: r.passengerId && typeof r.passengerId === 'object' ? r.passengerId.email : r.passengerEmail,
           fare: Number(r.fareFinal || r.fareEstimated || 0),
           commission: Number(r.fareFinal || r.fareEstimated || 0) * (commissionRate / 100),
           status: r.status,
@@ -238,6 +244,9 @@ exports.getWeeklyReport = async (req, res) => {
       const lmap = Object.fromEntries(local.map(d => [String(d._id), { name: d.name, phone: d.phone, email: d.email }]));
       topDrivers = topDriversAgg.map(d => ({
         driverId: String(d._id),
+        driverName: lmap[String(d._id)]?.name,
+        driverPhone: lmap[String(d._id)]?.phone,
+        driverEmail: lmap[String(d._id)]?.email,
         rides: d.rides,
         gross: d.gross,
         commission: d.commission,
