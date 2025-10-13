@@ -1,52 +1,6 @@
 const { Subscription, Trip, TripSchedule } = require("../models/indexModel");
 const { asyncHandler } = require("../middleware/errorHandler");
-const jwt = require('jsonwebtoken');
-
-// Helper: decode JWT from Authorization header
-function decodeToken(req) {
-  try {
-    const authz = req.headers && req.headers.authorization ? req.headers.authorization : null;
-    if (!authz) return null;
-    const clean = authz.startsWith('Bearer ') ? authz.slice(7) : authz;
-    return jwt.verify(clean, process.env.JWT_SECRET || 'secret');
-  } catch (_) { return null; }
-}
-
-// Helper: find passenger info object in decoded token structures
-function findPassengerInDecoded(decoded, passengerId) {
-  if (!decoded) return null;
-  const candidates = [
-    decoded.passengers,
-    decoded.assignedPassengers,
-    decoded.users,
-    decoded.userList,
-    decoded.data,
-    decoded.payload,
-    decoded.context,
-    decoded.user && decoded.user.passengers,
-    decoded.user && decoded.user.users,
-    decoded.user && decoded.user.data
-  ];
-
-  const isMatch = (u) => {
-    if (!u) return false;
-    const id = u.id || u._id || (u.user && (u.user.id || u.user._id));
-    return id != null && String(id) === String(passengerId);
-  };
-
-  for (const cont of candidates) {
-    if (!cont) continue;
-    if (Array.isArray(cont)) {
-      const found = cont.find(isMatch);
-      if (found) return found;
-    } else if (typeof cont === 'object') {
-      if (cont[String(passengerId)]) return cont[String(passengerId)];
-      const found = Object.values(cont).find(isMatch);
-      if (found) return found;
-    }
-  }
-  return null;
-}
+const { getUserInfo } = require("../utils/tokenHelper");
 const { Op } = require("sequelize");
 
 // GET /driver/:id/passengers - Get driver's subscribed passengers with contract expiration and payment status
@@ -71,21 +25,19 @@ exports.getDriverPassengers = asyncHandler(async (req, res) => {
       order: [['end_date', 'ASC']],
     });
 
-    const decoded = decodeToken(req);
-
     // Enrich with passenger information and expiration details
     const enrichedPassengers = await Promise.all(
       subscriptions.map(async (subscription) => {
         const subData = subscription.toJSON();
-        const passengerFromToken = findPassengerInDecoded(decoded, subscription.passenger_id);
+        const passengerInfo = await getUserInfo(req, subscription.passenger_id, 'passenger');
 
-        const name = passengerFromToken && (passengerFromToken.name || passengerFromToken.fullName) 
+        const name = passengerInfo?.name 
           || subData.passenger_name 
           || `Passenger ${String(subscription.passenger_id).slice(-4)}`;
-        const phone = passengerFromToken && (passengerFromToken.phone || passengerFromToken.msisdn)
+        const phone = passengerInfo?.phone
           || subData.passenger_phone 
           || 'Not available';
-        const email = passengerFromToken && (passengerFromToken.email)
+        const email = passengerInfo?.email
           || subData.passenger_email 
           || 'Not available';
 
@@ -185,21 +137,15 @@ exports.getDriverSchedule = asyncHandler(async (req, res) => {
       order: [['start_date', 'ASC'], ['createdAt', 'DESC']],
     });
 
-    // Decode token once
-    const decoded = decodeToken(req);
-
     // Enrich schedule with passenger information and organize by contract type
     const enrichedSchedule = await Promise.all(
       scheduleSubscriptions.map(async (subscription) => {
         const subData = subscription.toJSON();
-        const passengerFromToken = findPassengerInDecoded(decoded, subscription.passenger_id);
+        const passengerInfo = await getUserInfo(req, subscription.passenger_id, 'passenger');
 
-        const name = (passengerFromToken && (passengerFromToken.name || passengerFromToken.fullName))
-          || subData.passenger_name || `Passenger ${String(subscription.passenger_id).slice(-4)}`;
-        const phone = (passengerFromToken && (passengerFromToken.phone || passengerFromToken.msisdn))
-          || subData.passenger_phone || 'Not available';
-        const email = (passengerFromToken && passengerFromToken.email)
-          || subData.passenger_email || 'Not available';
+        const name = passengerInfo?.name || subData.passenger_name || `Passenger ${String(subscription.passenger_id).slice(-4)}`;
+        const phone = passengerInfo?.phone || subData.passenger_phone || 'Not available';
+        const email = passengerInfo?.email || subData.passenger_email || 'Not available';
 
         const item = {
           ...subData,
@@ -359,25 +305,16 @@ exports.getDriverTripHistory = asyncHandler(async (req, res) => {
       order: [['actual_dropoff_time', 'DESC'], ['createdAt', 'DESC']],
     });
 
-    // Decode token once
-    const decoded = decodeToken(req);
-
     // Enrich trips with passenger information
     const enrichedTrips = await Promise.all(
       trips.map(async (trip) => {
         const tripData = trip.toJSON();
-        const passengerFromToken = findPassengerInDecoded(decoded, trip.passenger_id);
+        const passengerInfo = await getUserInfo(req, trip.passenger_id, 'passenger');
         const sub = tripData.subscription || {};
 
-        const name = (passengerFromToken && (passengerFromToken.name || passengerFromToken.fullName))
-          || sub.passenger_name
-          || `Passenger ${String(trip.passenger_id).slice(-4)}`;
-        const phone = (passengerFromToken && (passengerFromToken.phone || passengerFromToken.msisdn))
-          || sub.passenger_phone
-          || 'Not available';
-        const email = (passengerFromToken && passengerFromToken.email)
-          || sub.passenger_email
-          || 'Not available';
+        const name = passengerInfo?.name || sub.passenger_name || `Passenger ${String(trip.passenger_id).slice(-4)}`;
+        const phone = passengerInfo?.phone || sub.passenger_phone || 'Not available';
+        const email = passengerInfo?.email || sub.passenger_email || 'Not available';
         
         const { subscription, ...rest } = tripData;
         return {

@@ -1,5 +1,5 @@
-const jwt = require("jsonwebtoken");
 require("dotenv").config();
+const { verifyExternalToken } = require("../utils/externalJwt");
 
 const authenticate = (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -9,31 +9,22 @@ const authenticate = (req, res, next) => {
       .json({ message: "Authentication failed: No token provided." });
   }
 
-  const token = authHeader.split(" ")[1];
-
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded || {};
-    // Normalize common id fields from token payload
-    const idCandidates = [
-      decoded && decoded.id,
-      decoded && decoded.userId,
-      decoded && decoded._id,
-      decoded && decoded.sub,
-      decoded && decoded.user && (decoded.user.id || decoded.user._id),
-    ].filter((v) => v !== undefined && v !== null && v !== "");
-    if (idCandidates.length > 0) {
-      req.user.id = String(idCandidates[0]);
-    }
-    // Normalize roles field to array if provided as single string
-    if (req.user && typeof req.user.roles === 'string') {
-      req.user.roles = [req.user.roles];
-    }
-    next();
-  } catch (error) {
-    return res
-      .status(401)
-      .json({ message: "Authentication failed: Invalid token." });
+    const claims = verifyExternalToken(authHeader);
+    req.user = {
+      id: String(claims.id),
+      type: String(claims.type || '').toLowerCase(),
+      roles: Array.isArray(claims.roles) ? claims.roles : (claims.roles ? [claims.roles] : []),
+      driverId: claims.driverId != null ? String(claims.driverId) : null,
+      paymentPreference: claims.paymentPreference ?? null,
+      carName: claims.carName ?? null,
+      iss: claims.iss,
+      aud: claims.aud,
+      ver: claims.ver,
+    };
+    return next();
+  } catch (e) {
+    return res.status(401).json({ message: "Authentication failed: Unauthorized" });
   }
 };
 

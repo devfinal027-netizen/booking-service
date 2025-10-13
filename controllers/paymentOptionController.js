@@ -21,12 +21,13 @@ exports.partners = asyncHandler(async (_req, res) => {
 });
 
 exports.create = asyncHandler(async (req, res) => {
-  const { name, logo } = req.body || {};
+  const { name } = req.body || {};
+  const logoPath = req.file ? req.file.path.replace(/\\/g, '/') : null;
   if (!name || String(name).trim() === '') return res.status(400).json({ message: 'name is required' });
   const exists = await PaymentOption.findOne({ where: { name: String(name).trim() } });
   if (exists) return res.status(409).json({ message: 'Payment option already exists' });
-  const row = await PaymentOption.create({ name: String(name).trim(), logo });
-  return res.status(201).json({ id: row.id, name: row.name, logo: row.logo });
+  const row = await PaymentOption.create({ name: String(name).trim(), logo: logoPath });
+  return res.status(201).json({ id: row.id, name: row.name, logo: row.logo || '' });
 });
 
 exports.setPreference = asyncHandler(async (req, res) => {
@@ -57,7 +58,8 @@ exports.getPreference = asyncHandler(async (req, res) => {
 // UPDATE payment option (admin)
 exports.update = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { name, logo } = req.body || {};
+  const { name } = req.body || {};
+  const logoPath = req.file ? req.file.path.replace(/\\/g, '/') : undefined;
   const row = await PaymentOption.findByPk(id);
   if (!row) return res.status(404).json({ message: 'Payment option not found' });
   if (name && String(name).trim() !== row.name) {
@@ -66,9 +68,9 @@ exports.update = asyncHandler(async (req, res) => {
   }
   await row.update({
     name: name != null ? String(name).trim() : row.name,
-    logo: logo != null ? logo : row.logo,
+    logo: logoPath !== undefined ? logoPath : row.logo,
   });
-  return res.json({ id: row.id, name: row.name, logo: row.logo });
+  return res.json({ id: row.id, name: row.name, logo: row.logo || '' });
 });
 
 // DELETE payment option (admin)
