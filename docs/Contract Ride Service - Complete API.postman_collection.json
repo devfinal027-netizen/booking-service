@@ -1,0 +1,442 @@
+{
+  "info": {
+    "_postman_id": "complete-api-collection-2024",
+    "name": "Contract Ride Service - Complete API",
+    "description": "Complete API collection with all endpoints for Admin, Passenger, and Driver roles",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "Authentication",
+          "item": [
+            {
+              "name": "Admin Login",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"username\": \"rootadmin\",\n  \"password\": \"admin123\"\n}" },
+                "url": { "raw": "{{authUrl}}/auth/admin/login", "host": ["{{authUrl}}"], "path": ["auth","admin","login"] }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Subscriptions",
+          "item": [
+            {
+              "name": "Get All Subscriptions",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }], "url": { "raw": "{{baseUrl}}/admin/subscriptions", "host": ["{{baseUrl}}"], "path": ["admin","subscriptions"] } }
+            },
+            {
+              "name": "Approve Subscription",
+              "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }], "url": { "raw": "{{baseUrl}}/admin/subscription/{{subscriptionId}}/approve", "host": ["{{baseUrl}}"], "path": ["admin","subscription","{{subscriptionId}}","approve"] } }
+            },
+            {
+              "name": "Assign Driver to Subscription",
+              "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"driver_id\": \"{{driverId}}\"\n}" }, "url": { "raw": "{{baseUrl}}/admin/subscription/{{subscriptionId}}/assign-driver", "host": ["{{baseUrl}}"], "path": ["admin","subscription","{{subscriptionId}}","assign-driver"] } }
+            },
+            {
+              "name": "Update Subscription",
+              "request": { "method": "PUT", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"status\": \"ACTIVE\"\n}" }, "url": { "raw": "{{baseUrl}}/admin/subscription/{{subscriptionId}}", "host": ["{{baseUrl}}"], "path": ["admin","subscription","{{subscriptionId}}"] } }
+            },
+            {
+              "name": "Delete Subscription",
+              "request": { "method": "DELETE", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }], "url": { "raw": "{{baseUrl}}/admin/subscription/{{subscriptionId}}", "host": ["{{baseUrl}}"], "path": ["admin","subscription","{{subscriptionId}}"] } }
+            },
+            {
+              "name": "Assign Driver to Passenger",
+              "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"driver_id\": \"{{driverId}}\"\n}" }, "url": { "raw": "{{baseUrl}}/admin/subscription/passenger/{{passengerId}}/assign-driver", "host": ["{{baseUrl}}"], "path": ["admin","subscription","passenger","{{passengerId}}","assign-driver"] } }
+            }
+          ]
+        },
+        {
+          "name": "Trips",
+          "item": [
+            {
+              "name": "Get All Trips",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }], "url": { "raw": "{{baseUrl}}/admin/trips", "host": ["{{baseUrl}}"], "path": ["admin","trips"] } }
+            },
+            {
+              "name": "Get Passenger Trips",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }], "url": { "raw": "{{baseUrl}}/admin/passenger/{{passengerId}}/trips", "host": ["{{baseUrl}}"], "path": ["admin","passenger","{{passengerId}}","trips"] } }
+            },
+            {
+              "name": "Get Driver Trips",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }], "url": { "raw": "{{baseUrl}}/admin/driver/{{driverId}}/trips", "host": ["{{baseUrl}}"], "path": ["admin","driver","{{driverId}}","trips"] } }
+            }
+          ]
+        },
+        {
+          "name": "Drivers",
+          "item": [
+            {
+              "name": "List All Drivers",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }], "url": { "raw": "{{baseUrl}}/admin/drivers", "host": ["{{baseUrl}}"], "path": ["admin","drivers"] } }
+            },
+            {
+              "name": "Get Driver Details",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }], "url": { "raw": "{{baseUrl}}/admin/driver/{{driverId}}", "host": ["{{baseUrl}}"], "path": ["admin","driver","{{driverId}}"] } }
+            }
+          ]
+        },
+        {
+          "name": "Payments",
+          "item": [
+            {
+              "name": "Manual Payments",
+              "item": [
+                { "name": "Get Pending Manual Payments", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }], "url": { "raw": "{{baseUrl}}/payments/manual/pending", "host": ["{{baseUrl}}"], "path": ["payments","manual","pending"] } } },
+                { "name": "Approve Manual Payment", "request": { "method": "PATCH", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }], "url": { "raw": "{{baseUrl}}/payments/manual/{{paymentId}}/approve", "host": ["{{baseUrl}}"], "path": ["payments","manual","{{paymentId}}","approve"] } } },
+                { "name": "Reject Manual Payment", "request": { "method": "PATCH", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }], "url": { "raw": "{{baseUrl}}/payments/manual/{{paymentId}}/reject", "host": ["{{baseUrl}}"], "path": ["payments","manual","{{paymentId}}","reject"] } } },
+                { "name": "List Manual Payments", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }], "url": { "raw": "{{baseUrl}}/payments/manual", "host": ["{{baseUrl}}"], "path": ["payments","manual"] } } },
+                { "name": "Get Manual Payment by ID", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }], "url": { "raw": "{{baseUrl}}/payments/manual/{{paymentId}}", "host": ["{{baseUrl}}"], "path": ["payments","manual","{{paymentId}}"] } } }
+              ]
+            },
+            {
+              "name": "List Payment Options",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }], "url": { "raw": "{{baseUrl}}/payments/options", "host": ["{{baseUrl}}"], "path": ["payments","options"] } }
+            },
+            {
+              "name": "Create Payment Option",
+              "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"name\": \"Telebirr\",\n  \"logo\": \"https://example.com/telebirr.png\"\n}" }, "url": { "raw": "{{baseUrl}}/payments/options", "host": ["{{baseUrl}}"], "path": ["payments","options"] } }
+            },
+            {
+              "name": "Update Payment Option",
+              "request": { "method": "PUT", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"name\": \"Telebirr Updated\",\n  \"logo\": \"https://example.com/telebirr-new.png\"\n}" }, "url": { "raw": "{{baseUrl}}/payments/options/{{paymentOptionId}}", "host": ["{{baseUrl}}"], "path": ["payments","options","{{paymentOptionId}}"] } }
+            },
+            {
+              "name": "Delete Payment Option",
+              "request": { "method": "DELETE", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }], "url": { "raw": "{{baseUrl}}/payments/options/{{paymentOptionId}}", "host": ["{{baseUrl}}"], "path": ["payments","options","{{paymentOptionId}}"] } }
+            }
+            
+          ]
+        },
+        {
+          "name": "Wallet",
+          "item": [
+            {
+              "name": "Get All Wallet Balances",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }], "url": { "raw": "{{baseUrl}}/wallet/admin/balances", "host": ["{{baseUrl}}"], "path": ["wallet","admin","balances"] } }
+            },
+            {
+              "name": "Get All Transactions",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }], "url": { "raw": "{{baseUrl}}/wallet/admin/transactions", "host": ["{{baseUrl}}"], "path": ["wallet","admin","transactions"] } }
+            },
+            {
+              "name": "Get User Transactions",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }], "url": { "raw": "{{baseUrl}}/wallet/transactions/{{passengerId}}", "host": ["{{baseUrl}}"], "path": ["wallet","transactions","{{passengerId}}"] } }
+            }
+          ]
+        },
+        {
+          "name": "Contract Types",
+          "item": [
+            {
+              "name": "Create Contract Type",
+              "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"name\": \"Daily Commute\",\n  \"description\": \"Daily commute subscription\",\n  \"is_active\": true\n}" }, "url": { "raw": "{{baseUrl}}/contract-types", "host": ["{{baseUrl}}"], "path": ["contract-types"] } }
+            },
+            {
+              "name": "Get All Contract Types",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }], "url": { "raw": "{{baseUrl}}/contract-types", "host": ["{{baseUrl}}"], "path": ["contract-types"] } }
+            },
+            {
+              "name": "Get Active Contract Types",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }], "url": { "raw": "{{baseUrl}}/contract-types/active", "host": ["{{baseUrl}}"], "path": ["contract-types","active"] } }
+            },
+            {
+              "name": "Get Contract Type by ID",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }], "url": { "raw": "{{baseUrl}}/contract-types/{{contractTypeId}}", "host": ["{{baseUrl}}"], "path": ["contract-types","{{contractTypeId}}"] } }
+            },
+            {
+              "name": "Update Contract Type",
+              "request": { "method": "PUT", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"name\": \"Daily Commute Updated\",\n  \"description\": \"Updated daily commute subscription\",\n  \"is_active\": true\n}" }, "url": { "raw": "{{baseUrl}}/contract-types/{{contractTypeId}}", "host": ["{{baseUrl}}"], "path": ["contract-types","{{contractTypeId}}"] } }
+            },
+            {
+              "name": "Delete Contract Type",
+              "request": { "method": "DELETE", "header": [{ "key": "Authorization", "value": "Bearer {{authToken}}" }], "url": { "raw": "{{baseUrl}}/contract-types/{{contractTypeId}}", "host": ["{{baseUrl}}"], "path": ["contract-types","{{contractTypeId}}"] } }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Passenger",
+      "item": [
+        {
+          "name": "Authentication",
+          "item": [
+            {
+              "name": "Passenger Login",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"username\": \"passenger1\",\n  \"password\": \"passenger123\"\n}" },
+                "url": { "raw": "{{authUrl}}/auth/passenger/login", "host": ["{{authUrl}}"], "path": ["auth","passenger","login"] }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Subscriptions",
+          "item": [
+            {
+              "name": "Create Subscription",
+              "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{passengerToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"contract_id\": \"{{contractId}}\",\n  \"pickup_location\": \"Bole International Airport\",\n  \"dropoff_location\": \"Addis Ababa University\",\n  \"pickup_latitude\": 8.9806,\n  \"pickup_longitude\": 38.7578,\n  \"dropoff_latitude\": 9.0365,\n  \"dropoff_longitude\": 38.7578,\n  \"start_date\": \"2024-01-01\",\n  \"end_date\": \"2024-01-31\"\n}" }, "url": { "raw": "{{baseUrl}}/subscription/create", "host": ["{{baseUrl}}"], "path": ["subscription","create"] } }
+            },
+            {
+              "name": "Process Subscription Payment",
+              "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{passengerToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"payment_option_id\": \"{{paymentOptionId}}\"\n}" }, "url": { "raw": "{{baseUrl}}/subscription/{{subscriptionId}}/payment", "host": ["{{baseUrl}}"], "path": ["subscription","{{subscriptionId}}","payment"] } }
+            },
+            {
+              "name": "Get My Subscriptions",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{passengerToken}}" }], "url": { "raw": "{{baseUrl}}/passenger/{{passengerId}}/subscriptions", "host": ["{{baseUrl}}"], "path": ["passenger","{{passengerId}}","subscriptions"] } }
+            },
+            {
+              "name": "Get Pending Subscriptions",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{passengerToken}}" }], "url": { "raw": "{{baseUrl}}/subscription/pending", "host": ["{{baseUrl}}"], "path": ["subscription","pending"] } }
+            }
+          ]
+        },
+        {
+          "name": "Trips",
+          "item": [
+            {
+              "name": "List My Trips",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{passengerToken}}" }], "url": { "raw": "{{baseUrl}}/trip", "host": ["{{baseUrl}}"], "path": ["trip"] } }
+            },
+            {
+              "name": "Create Trip on Pickup",
+              "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{passengerToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"subscription_id\": \"{{subscriptionId}}\",\n  \"notes\": \"Pickup confirmed\"\n}" }, "url": { "raw": "{{baseUrl}}/trip/pickup", "host": ["{{baseUrl}}"], "path": ["trip","pickup"] } }
+            },
+            {
+              "name": "Get Trip Details",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{passengerToken}}" }], "url": { "raw": "{{baseUrl}}/trip/{{tripId}}", "host": ["{{baseUrl}}"], "path": ["trip","{{tripId}}"] } }
+            },
+            
+            {
+              "name": "Confirm Dropoff",
+              "request": { "method": "PATCH", "header": [{ "key": "Authorization", "value": "Bearer {{passengerToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"notes\": \"Dropoff confirmed\"\n}" }, "url": { "raw": "{{baseUrl}}/trip/{{tripId}}/dropoff", "host": ["{{baseUrl}}"], "path": ["trip","{{tripId}}","dropoff"] } }
+            },
+            {
+              "name": "Get Trip History",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{passengerToken}}" }], "url": { "raw": "{{baseUrl}}/passenger/{{passengerId}}/trips", "host": ["{{baseUrl}}"], "path": ["passenger","{{passengerId}}","trips"] } }
+            }
+          ]
+        },
+        {
+          "name": "Driver Assignment",
+          "item": [
+            {
+              "name": "Get Assigned Driver by Subscription",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{passengerToken}}" }], "url": { "raw": "{{baseUrl}}/passenger/subscription/{{subscriptionId}}/driver", "host": ["{{baseUrl}}"], "path": ["passenger","subscription","{{subscriptionId}}","driver"] } }
+            }
+          ]
+        },
+        {
+          "name": "Payments",
+          "item": [
+            {
+              "name": "Manual Payment (Upload Receipt)",
+              "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{passengerToken}}" }], "body": { "mode": "formdata", "formdata": [
+                { "key": "subscription_id", "value": "{{subscriptionId}}", "type": "text" },
+                { "key": "payment_method", "value": "Manual Bank Transfer", "type": "text" },
+                { "key": "transaction_reference", "value": "BANK-TXN-12345", "type": "text" },
+                { "key": "receipt_image", "type": "file", "src": [] }
+              ] }, "url": { "raw": "{{baseUrl}}/payments/manual", "host": ["{{baseUrl}}"], "path": ["payments","manual"] } },
+              "response": [
+                {
+                  "name": "201 Created",
+                  "originalRequest": {},
+                  "status": "Created",
+                  "code": 201,
+                  "_postman_previewlanguage": "json",
+                  "body": "{\n  \"success\": true,\n  \"message\": \"Payment submitted for admin approval\",\n  \"paymentId\": \"{{paymentId}}\"\n}"
+                }
+              ]
+            },
+            {
+              "name": "List Payment Options",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{passengerToken}}" }], "url": { "raw": "{{baseUrl}}/payments/options", "host": ["{{baseUrl}}"], "path": ["payments","options"] } }
+            },
+            {
+              "name": "Get Payment Preference",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{passengerToken}}" }], "url": { "raw": "{{baseUrl}}/payments/preference", "host": ["{{baseUrl}}"], "path": ["payments","preference"] } }
+            },
+            {
+              "name": "Set Payment Preference",
+              "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{passengerToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"payment_option_id\": \"{{paymentOptionId}}\"\n}" }, "url": { "raw": "{{baseUrl}}/payments/preference", "host": ["{{baseUrl}}"], "path": ["payments","preference"] } }
+            },
+            {
+              "name": "Process Subscription Payment (SantimPay)",
+              "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{passengerToken}}" }], "body": { "mode": "formdata", "formdata": [{ "key": "amount", "value": "100", "type": "text" }, { "key": "payment_option_id", "value": "{{paymentOptionId}}", "type": "text" }] }, "url": { "raw": "{{baseUrl}}/payments/passenger/subscription/{{subscriptionId}}", "host": ["{{baseUrl}}"], "path": ["payments","passenger","subscription","{{subscriptionId}}"] } }
+            }
+          ]
+        },
+        {
+          "name": "Wallet",
+          "item": [
+            {
+              "name": "Get My Balance",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{passengerToken}}" }], "url": { "raw": "{{baseUrl}}/wallet/balance", "host": ["{{baseUrl}}"], "path": ["wallet","balance"] } }
+            },
+            {
+              "name": "Wallet Topup",
+              "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{passengerToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"amount\": 100,\n  \"paymentMethod\": \"Telebirr\",\n  \"reason\": \"Wallet Topup\"\n}" }, "url": { "raw": "{{baseUrl}}/wallet/topup", "host": ["{{baseUrl}}"], "path": ["wallet","topup"] } }
+            },
+            {
+              "name": "My Transactions",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{passengerToken}}" }], "url": { "raw": "{{baseUrl}}/wallet/transactions", "host": ["{{baseUrl}}"], "path": ["wallet","transactions"] } }
+            }
+          ]
+        },
+        {
+          "name": "Contract Types",
+          "item": [
+            {
+              "name": "Get All Contract Types",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{passengerToken}}" }], "url": { "raw": "{{baseUrl}}/contract-types", "host": ["{{baseUrl}}"], "path": ["contract-types"] } }
+            },
+            {
+              "name": "Get Active Contract Types",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{passengerToken}}" }], "url": { "raw": "{{baseUrl}}/contract-types/active", "host": ["{{baseUrl}}"], "path": ["contract-types","active"] } }
+            },
+            {
+              "name": "Get Contract Type by ID",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{passengerToken}}" }], "url": { "raw": "{{baseUrl}}/contract-types/{{contractTypeId}}", "host": ["{{baseUrl}}"], "path": ["contract-types","{{contractTypeId}}"] } }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Driver",
+      "item": [
+        {
+          "name": "Authentication",
+          "item": [
+            {
+              "name": "Driver Login",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"username\": \"driver1\",\n  \"password\": \"driver123\"\n}" },
+                "url": { "raw": "{{authUrl}}/auth/driver/login", "host": ["{{authUrl}}"], "path": ["auth","driver","login"] }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Passengers & Schedule",
+          "item": [
+            {
+              "name": "Get My Passengers",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{driverToken}}" }], "url": { "raw": "{{baseUrl}}/driver/{{driverId}}/passengers", "host": ["{{baseUrl}}"], "path": ["driver","{{driverId}}","passengers"] } }
+            },
+            {
+              "name": "Get My Schedule",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{driverToken}}" }], "url": { "raw": "{{baseUrl}}/driver/{{driverId}}/schedule", "host": ["{{baseUrl}}"], "path": ["driver","{{driverId}}","schedule"] } }
+            }
+          ]
+        },
+        {
+          "name": "Trips",
+          "item": [
+            {
+              "name": "Get Trip History",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{driverToken}}" }], "url": { "raw": "{{baseUrl}}/driver/{{driverId}}/triphistory", "host": ["{{baseUrl}}"], "path": ["driver","{{driverId}}","triphistory"] } }
+            },
+            {
+              "name": "Notify Passenger",
+              "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{driverToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"message\": \"I'm on my way\",\n  \"type\": \"pickup_notification\"\n}" }, "url": { "raw": "{{baseUrl}}/driver/{{driverId}}/trip/{{tripId}}/notify", "host": ["{{baseUrl}}"], "path": ["driver","{{driverId}}","trip","{{tripId}}","notify"] } }
+            }
+          ]
+        },
+        {
+          "name": "Earnings",
+          "item": [
+            {
+              "name": "Get My Earnings",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{driverToken}}" }], "url": { "raw": "{{baseUrl}}/driver/{{driverId}}/earnings", "host": ["{{baseUrl}}"], "path": ["driver","{{driverId}}","earnings"] } }
+            }
+          ]
+        },
+        {
+          "name": "Payments",
+          "item": [
+            {
+              "name": "List Payment Options",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{driverToken}}" }], "url": { "raw": "{{baseUrl}}/payments/options", "host": ["{{baseUrl}}"], "path": ["payments","options"] } }
+            },
+            {
+              "name": "Get Payment Preference",
+              "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{driverToken}}" }], "url": { "raw": "{{baseUrl}}/payments/preference", "host": ["{{baseUrl}}"], "path": ["payments","preference"] } }
+            },
+            {
+              "name": "Set Payment Preference",
+              "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{driverToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"payment_option_id\": \"{{paymentOptionId}}\"\n}" }, "url": { "raw": "{{baseUrl}}/payments/preference", "host": ["{{baseUrl}}"], "path": ["payments","preference"] } }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Webhooks",
+      "item": [
+        {
+          "name": "Public Webhook Echo",
+          "item": [
+            {
+              "name": "POST Public Webhook",
+              "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"test\": \"data\",\n  \"timestamp\": \"2024-01-01T00:00:00Z\"\n}" }, "url": { "raw": "{{baseUrl}}/webhook/public", "host": ["{{baseUrl}}"], "path": ["webhook","public"] } }
+            },
+            {
+              "name": "GET Public Webhook",
+              "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/webhook/public", "host": ["{{baseUrl}}"], "path": ["webhook","public"] } }
+            }
+          ]
+        },
+        {
+          "name": "Payment Provider Webhook",
+          "item": [
+            {
+              "name": "Payment Provider Webhook",
+              "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"txnId\": \"TXN123456\",\n  \"merId\": \"MERCHANT123\",\n  \"amount\": 100,\n  \"status\": \"SUCCESS\",\n  \"msisdn\": \"+251912345678\"\n}" }, "url": { "raw": "{{baseUrl}}/webhook/payment", "host": ["{{baseUrl}}"], "path": ["webhook","payment"] } }
+            }
+          ]
+        },
+        {
+          "name": "SantimPay Webhooks",
+          "item": [
+            {
+              "name": "Wallet Webhook",
+              "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"data\": {\n    \"TxnId\": \"TXN123456\",\n    \"Status\": \"COMPLETED\",\n    \"amount\": 100,\n    \"thirdPartyId\": \"{{transactionId}}\",\n    \"msisdn\": \"+251912345678\"\n  }\n}" }, "url": { "raw": "{{baseUrl}}/wallet/webhook", "host": ["{{baseUrl}}"], "path": ["wallet","webhook"] } }
+            },
+            {
+              "name": "Subscription Payment Webhook",
+              "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"data\": {\n    \"TxnId\": \"TXN123456\",\n    \"Status\": \"COMPLETED\",\n    \"amount\": 100,\n    \"thirdPartyId\": \"{{subscriptionId}}\",\n    \"msisdn\": \"+251912345678\"\n  }\n}" }, "url": { "raw": "{{baseUrl}}/subscription/payment/webhook", "host": ["{{baseUrl}}"], "path": ["subscription","payment","webhook"] } }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000/api", "type": "string" },
+    { "key": "authUrl", "value": "https://authservice.capitalinvestmenttradingplc.com/api", "type": "string" },
+    { "key": "authToken", "value": "", "type": "string" },
+    { "key": "passengerToken", "value": "", "type": "string" },
+    { "key": "driverToken", "value": "", "type": "string" },
+    { "key": "passengerId", "value": "passenger-uuid-123", "type": "string" },
+    { "key": "driverId", "value": "driver-uuid-456", "type": "string" },
+    { "key": "subscriptionId", "value": "", "type": "string" },
+    { "key": "paymentId", "value": "", "type": "string" },
+    { "key": "tripId", "value": "trip-uuid-123", "type": "string" },
+    { "key": "paymentOptionId", "value": "", "type": "string" },
+    { "key": "contractId", "value": "", "type": "string" },
+    { "key": "contractTypeId", "value": "", "type": "string" },
+    { "key": "transactionId", "value": "", "type": "string" }
+  ]
+}

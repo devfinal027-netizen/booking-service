@@ -1,108 +1,113 @@
-const jwt = require('jsonwebtoken');
-const logger = require('../utils/logger');
+const jwt = require("jsonwebtoken");
+require("dotenv").config();
 
 const authenticate = (req, res, next) => {
-  const raw = req.headers.authorization || '';
-  const token = String(raw).replace(/^\s*Bearer\s+/i, '');
-  if (!token) {
-    logger.warn('[auth] missing token', { path: req.originalUrl || req.url, rawHeader: raw ? `${raw.slice(0,20)}...` : '' });
-    return res.status(401).json({ message: 'Unauthorized' });
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res
+      .status(401)
+      .json({ message: "Authentication failed: No token provided." });
   }
+
+  const token = authHeader.split(" ")[1];
+
   try {
-    const issuer = process.env.TOKEN_ISSUER || process.env.JWT_ISSUER || 'auth-service';
-    const audience = process.env.TOKEN_AUDIENCE || process.env.JWT_AUDIENCE || 'booking-service';
-    const header = jwt.decode(token, { complete: true })?.header || {};
-    const algorithms = ['HS256'];
-
-    const rawSecret = process.env.JWT_SECRET;
-    const isBase64Flag = process.env.JWT_SECRET_IS_BASE64 === '1' || process.env.ALLOW_BASE64_JWT_SECRET === '1';
-    const base64Secret = (() => {
-      try { return Buffer.from(String(rawSecret || ''), 'base64'); } catch (_) { return null; }
-    })();
-
-    let claims;
-    let firstError;
-    try {
-      claims = jwt.verify(token, rawSecret, { algorithms, issuer, audience });
-    } catch (e1) {
-      firstError = e1;
-      if (isBase64Flag && base64Secret && e1 && e1.name === 'JsonWebTokenError' && /invalid signature/i.test(String(e1.message))) {
-        try {
-          claims = jwt.verify(token, base64Secret, { algorithms, issuer, audience });
-        } catch (e2) {
-          throw e2;
-        }
-      } else {
-        throw e1;
-      }
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded || {};
+    // Normalize common id fields from token payload
+    const idCandidates = [
+      decoded && decoded.id,
+      decoded && decoded.userId,
+      decoded && decoded._id,
+      decoded && decoded.sub,
+      decoded && decoded.user && (decoded.user.id || decoded.user._id),
+    ].filter((v) => v !== undefined && v !== null && v !== "");
+    if (idCandidates.length > 0) {
+      req.user.id = String(idCandidates[0]);
     }
-    req.user = claims;
-    if (process.env.AUTH_DEBUG === '1') {
-      logger.info('[auth] verified', {
-        id: claims.id,
-        type: claims.type,
-        iss: claims.iss,
-        aud: claims.aud,
-        exp: claims.exp,
-        path: req.originalUrl || req.url,
-        alg: header.alg,
-        typ: header.typ,
-        secretLen: rawSecret ? String(rawSecret).length : 0,
-        base64SecretLen: base64Secret ? base64Secret.length : 0,
-      });
+    // Normalize roles field to array if provided as single string
+    if (req.user && typeof req.user.roles === 'string') {
+      req.user.roles = [req.user.roles];
     }
-    return next();
-  } catch (e) {
-    logger.warn('[auth] verify failed', {
-      error: e && e.message,
-      name: e && e.name,
-      code: e && e.code,
-      path: req.originalUrl || req.url,
-      issuer: process.env.TOKEN_ISSUER || process.env.JWT_ISSUER || 'auth-service',
-      audience: process.env.TOKEN_AUDIENCE || process.env.JWT_AUDIENCE || 'booking-service',
-      hasSecret: !!process.env.JWT_SECRET,
-      headerPreview: raw ? `${raw.slice(0, 14)}...` : '',
-    });
-    return res.status(401).json({ message: 'Invalid token' });
+    next();
+  } catch (error) {
+    return res
+      .status(401)
+      .json({ message: "Authentication failed: Invalid token." });
   }
 };
 
-const authorize = (...allowedRoles) => {
-  const normalizeRoleString = (value) => {
-    if (!value) return '';
-    let s = String(value).toLowerCase();
-    // strip common prefixes
-    s = s.replace(/^role[_:\-\s]?/, '');
-    s = s.replace(/^scope[_:\-\s]?/, '');
-    s = s.replace(/^urn:[^:]+:/, '');
-    // compact separators
-    s = s.replace(/[\s\-]+/g, '_');
-    // singularize simple plurals
-    if (s === 'drivers') s = 'driver';
-    if (s === 'admins') s = 'admin';
-    if (s === 'passengers') s = 'passenger';
-    if (s === 'staffs') s = 'staff';
-    if (s === 'superadmins') s = 'superadmin';
-    // map common synonyms
-    if (s === 'customer' || s === 'customers') s = 'passenger';
-    if (s === 'rider' || s === 'riders') s = 'passenger';
-    if (s === 'super_admin') s = 'superadmin';
-    return s;
+/**
+ * Updated authorize middleware that works with your token structure
+ * Uses the 'type' field for authorization since 'roles' is only for superadmin
+ */
+const authorize = (...allowedTypes) => {
+  // Normalize allowed types to lower-case for case-insensitive matching
+  const normalizedAllowed = (allowedTypes || []).map((t) => String(t).toLowerCase());
+
+  // Helper to normalize a single role/type token into canonical form
+  const normalizeRole = (value) => {
+    if (!value) return undefined;
+    let raw = String(value).toLowerCase();
+    // Strip common prefixes and separators: ROLE_ADMIN, SUPER_ADMIN, etc.
+    raw = raw.replace(/^role[_-]/, "").replace(/[^a-z]/g, "");
+    if (raw.startsWith("superadmin") || raw === "superadministrator") return "superadmin";
+    if (raw === "administrator" || raw.startsWith("admin")) return "admin";
+    if (raw.startsWith("driver")) return "driver";
+    if (raw.startsWith("passenger") || raw === "rider") return "passenger";
+    if (raw === "staff" || raw === "operator") return "admin"; // treat staff/operator as admin for authorization
+    return raw; // fallback
   };
 
-  const allowed = (allowedRoles || []).map(r => normalizeRoleString(r));
   return (req, res, next) => {
-    if (!req.user) return res.status(403).json({ message: 'Forbidden: No user information found.' });
+    if (!req.user) {
+      return res
+        .status(403)
+        .json({ message: "Forbidden: No user information found." });
+    }
 
-    const userType = normalizeRoleString(req.user.type);
-    const userRoles = Array.isArray(req.user.roles) ? req.user.roles.map(r => normalizeRoleString(r)) : [];
+    // Collect all possible type/role signals
+    const roleCandidates = [];
+    const pushIf = (v) => { const n = normalizeRole(v); if (n) roleCandidates.push(n); };
+    pushIf(req.user.type);
+    pushIf(req.user.role);
+    if (Array.isArray(req.user.roles)) {
+      req.user.roles.forEach((r) => pushIf(typeof r === "object" ? (r.name || r.role) : r));
+    }
+    if (req.user.isAdmin || req.user.is_admin) roleCandidates.push("admin");
 
-    const isAuthorized = userRoles.some(r => allowed.includes(r)) || allowed.includes(userType);
+    // Determine effective type with privilege precedence
+    let effectiveType = "";
+    if (roleCandidates.includes("superadmin")) effectiveType = "superadmin";
+    else if (roleCandidates.includes("admin")) effectiveType = "admin";
+    else if (roleCandidates.includes("driver")) effectiveType = "driver";
+    else if (roleCandidates.includes("passenger")) effectiveType = "passenger";
 
-    if (isAuthorized) return next();
-    return res.status(403).json({ message: 'Forbidden' });
+    // Persist normalized type on request for downstream handlers
+    if (effectiveType) req.user.type = effectiveType;
+
+    // If endpoint allows admin, also allow superadmin
+    if (normalizedAllowed.includes("admin") && (effectiveType === "admin" || effectiveType === "superadmin")) {
+      return next();
+    }
+
+    // Strict superadmin endpoints
+    if (normalizedAllowed.includes("superadmin") && effectiveType === "superadmin") {
+      return next();
+    }
+
+    // For all other user types, check direct inclusion
+    if (effectiveType && normalizedAllowed.includes(effectiveType)) {
+      return next();
+    }
+
+    return res.status(403).json({
+      message: "Forbidden: You do not have permission to access this resource.",
+    });
   };
 };
 
-module.exports = { authenticate, authorize };
-
+module.exports = {
+  authenticate,
+  authorize,
+};
