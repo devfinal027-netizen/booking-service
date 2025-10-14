@@ -244,7 +244,8 @@ try {
 
             // --- START OF MODIFICATION ---
             // Fetch full driver details for active bookings to include carPlate and carColor
-            const driverIdsInActiveBookings = [...new Set(activeCurrentBookings.map(b => String(b.driverId)).filter(Boolean))];
+            // Ensure we exclude undefined driverIds to avoid querying with "undefined"
+            const driverIdsInActiveBookings = [...new Set(activeCurrentBookings.map(b => b.driverId).filter(Boolean).map(String))];
             let driverDetailsMap = {};
             if (driverIdsInActiveBookings.length > 0) {
               const drivers = await Driver.find({ _id: { $in: driverIdsInActiveBookings } })
