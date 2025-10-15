@@ -74,11 +74,9 @@ async function updateTripLocation(bookingId, driverId, location) {
         { latitude: point.lat, longitude: point.lng }
       );
       const distanceMeters = distanceKm * 1000;
-      const lastTs = last.timestamp ? new Date(last.timestamp).getTime() : null;
-      const deltaSeconds = lastTs && Number.isFinite(lastTs) ? Math.abs(now.getTime() - lastTs) / 1000 : Number.POSITIVE_INFINITY;
 
-      // Standard ride-hailing sampling: append if moved ≥10m OR ≥15s elapsed
-      shouldAppend = distanceMeters >= 10 || deltaSeconds >= 15;
+      // Append only if moved ≥10 meters (remove time-based threshold)
+      shouldAppend = distanceMeters >= 10;
     }
   } catch (_) {
     shouldAppend = true; // On any read error, default to appending to avoid data loss
