@@ -52,6 +52,7 @@ function buildLifecyclePayload(booking, { previousStatus, reason, driver, passen
     canceledBy: booking.canceledBy || extras?.canceledBy,
     canceledReason: extras?.canceledReason || booking.canceledReason,
     fareEstimated: booking.fareEstimated != null ? Number(booking.fareEstimated) : undefined,
+    currentFare: booking.currentFare != null ? Number(booking.currentFare) : undefined,
     fareFinal: booking.fareFinal != null ? Number(booking.fareFinal) : undefined,
     distanceKm: booking.distanceKm != null ? Number(booking.distanceKm) : undefined,
     reason,

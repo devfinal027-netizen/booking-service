@@ -158,6 +158,7 @@ module.exports = (io, socket) => {
             pickup: booking.pickup,
             dropoff: booking.dropoff,
             fareEstimated: booking.fareEstimated,
+            currentFare: booking.currentFare,
             fareFinal: booking.fareFinal,
             distanceKm: booking.distanceKm,
             createdAt: booking.createdAt,
