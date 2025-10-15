@@ -54,12 +54,44 @@ async function startTrip(bookingId, startLocation) {
 }
 
 async function updateTripLocation(bookingId, driverId, location) {
-  const point = { lat: Number(location.latitude), lng: Number(location.longitude), timestamp: new Date() };
-  await TripHistory.findOneAndUpdate(
-    { bookingId },
-    { $push: { locations: point } },
-    { upsert: true }
-  );
+  const now = new Date();
+  const point = { lat: Number(location.latitude), lng: Number(location.longitude), timestamp: now };
+
+  // Fetch the last recorded point to decide whether to append a new one
+  let shouldAppend = true;
+  try {
+    const existing = await TripHistory.findOne({ bookingId })
+      .select({ locations: { $slice: -1 } })
+      .lean();
+
+    const last = existing && Array.isArray(existing.locations) && existing.locations.length > 0
+      ? existing.locations[0]
+      : null;
+
+    if (last && last.lat != null && last.lng != null) {
+      const distanceKm = haversineKm(
+        { latitude: Number(last.lat), longitude: Number(last.lng) },
+        { latitude: point.lat, longitude: point.lng }
+      );
+      const distanceMeters = distanceKm * 1000;
+      const lastTs = last.timestamp ? new Date(last.timestamp).getTime() : null;
+      const deltaSeconds = lastTs && Number.isFinite(lastTs) ? Math.abs(now.getTime() - lastTs) / 1000 : Number.POSITIVE_INFINITY;
+
+      // Standard ride-hailing sampling: append if moved ≥10m OR ≥15s elapsed
+      shouldAppend = distanceMeters >= 10 || deltaSeconds >= 15;
+    }
+  } catch (_) {
+    shouldAppend = true; // On any read error, default to appending to avoid data loss
+  }
+
+  if (shouldAppend) {
+    await TripHistory.findOneAndUpdate(
+      { bookingId },
+      { $push: { locations: point } },
+      { upsert: true }
+    );
+  }
+
   return point;
 }
 
