@@ -349,7 +349,7 @@ async function updateBookingLifecycle({ requester, id, status, reason, extras = 
   }
   if (status === 'completed') {
     booking.completedAt = new Date();
-    booking.fareFinal = booking.fareEstimated;
+    // Do not set fareFinal here; completion bookkeeping is handled in bookingLifecycleService.completeTrip
     if (booking.driverId) {
       const commission = await Commission.findOne({ driverId: String(booking.driverId) }).sort({ createdAt: -1 });
       const commissionRate = commission && Number.isFinite(commission.percentage) ? commission.percentage : Number(process.env.COMMISSION_RATE || 15);
