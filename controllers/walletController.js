@@ -2,19 +2,36 @@ const { randomUUID } = require("crypto");
 const santim = require("../utils/santimpay");
 const { Wallet, Transaction } = require("../models/indexModel");
 
+/**
+ * Normalize various Ethiopian mobile formats to E.164 (+251XXXXXXXXX)
+ * Accepts:
+ * - 09XXXXXXXX
+ * - 07XXXXXXXX
+ * - 2519XXXXXXXX
+ * - 2517XXXXXXXX
+ * - +2519XXXXXXXX
+ * - +2517XXXXXXXX
+ * Returns string like "+2519XXXXXXXX" or "+2517XXXXXXXX"
+ */
 function normalizeMsisdnEt(raw) {
   if (!raw) return null;
   let s = String(raw).trim();
   s = s.replace(/\s+/g, "").replace(/[-()]/g, "");
-  if (/^\+?251/.test(s)) {
-    s = s.replace(/^\+?251/, "+251");
-  } else if (/^0\d+/.test(s)) {
-    s = s.replace(/^0/, "+251");
-  } else if (/^9\d{8}$/.test(s)) {
-    s = "+251" + s;
+
+  // Combined regex for both 09 and 07 prefixes (Ethio Telecom and Safaricom Ethiopia)
+  // ^(?:\+251|251|0)?([79]\d{8})$
+  // - ^           : start of the string
+  // - (?:\+251|251|0)? : optional non-capturing group for prefix (+251, 251, or 0)
+  // - ([79]\d{8}) : capturing group for the 9-digit number starting with 7 or 9
+  // - $           : end of the string
+  const match = s.match(/^(?:\+251|251|0)?([79]\d{8})$/);
+
+  if (match) {
+    return "+251" + match[1]; // Prepend +251 to the captured 9-digit number
   }
-  if (!/^\+2519\d{8}$/.test(s)) return null;
-  return s;
+  
+  // If it doesn't match any valid Ethiopian mobile pattern, return null
+  return null;
 }
 
 function normalizePaymentMethod(method) {
@@ -26,6 +43,7 @@ function normalizePaymentMethod(method) {
     'commercial bank of ethiopia (cbe)': 'CBE', 'commercial bank of ethiopia': 'CBE', 'commercial bank of ethiopia cbe': 'CBE',
     hellocash: 'HelloCash', 'hello-cash': 'HelloCash', 'hello cash': 'HelloCash',
     mpesa: 'MPesa', 'm-pesa': 'MPesa', 'm pesa': 'MPesa', 'm_pesa': 'MPesa',
+    safaricom: 'Safaricom', 'safaricom ethiopia': 'Safaricom', 'safaricom_et': 'Safaricom',
     'bank of abyssinia': 'Abyssinia', abyssinia: 'Abyssinia',
     awash: 'Awash', 'awash bank': 'Awash',
     dashen: 'Dashen', 'dashen bank': 'Dashen',
@@ -37,10 +55,9 @@ function normalizePaymentMethod(method) {
     yimlu: 'Yimlu',
   };
   if (table[m]) return table[m];
-  // Map any residual bank keyword to CBE rails as a fallback
   const bankKeywords = ['bank'];
   if (bankKeywords.some(k => m.includes(k))) return 'CBE';
-  return raw; // pass-through for other configured options
+  return raw;
 }
 
 exports.topup = async (req, res) => {
@@ -52,7 +69,7 @@ exports.topup = async (req, res) => {
     if (!tokenPhone) return res.status(400).json({ message: "phoneNumber missing in token" });
 
     const msisdn = normalizeMsisdnEt(tokenPhone);
-    if (!msisdn) return res.status(400).json({ message: "Invalid phone format in token. Required: +2519XXXXXXXX" });
+    if (!msisdn) return res.status(400).json({ message: "Invalid phone format in token. Required: +2517XXXXXXXX or +2519XXXXXXXX" }); // Updated error message
 
     const userId = String(req.user.id);
 
@@ -72,20 +89,16 @@ exports.topup = async (req, res) => {
       metadata: { reason } 
     });
 
-    // Resolve payment method from payment_option_id or explicit string
     let methodForGateway = null;
     
-    // Helper function to pick non-empty string
     const pick = (v) => (typeof v === 'string' && v.trim().length) ? v.trim() : null;
     
-    // Try explicit payment method first
     const explicit = pick(paymentMethod);
     if (explicit) {
       console.log('Using explicit payment method:', explicit);
       methodForGateway = normalizePaymentMethod(explicit);
     }
     
-    // Try payment option ID
     if (!methodForGateway && req.body && req.body.payment_option_id) {
       try {
         const { PaymentOption } = require("../models/indexModel");
@@ -99,11 +112,8 @@ exports.topup = async (req, res) => {
       }
     }
     
-    // Try user payment preferences
     if (!methodForGateway) {
       try {
-        // This would require integration with your user service
-        // For now, we'll use a default or throw an error
         console.log('User payment preferences not implemented yet');
       } catch (e) {
         console.error('Error resolving user payment preferences:', e);
@@ -142,15 +152,11 @@ exports.topup = async (req, res) => {
 
 exports.webhook = async (req, res) => {
   try {
-    // Expect SantimPay to call with fields including txnId, Status, amount, reason, msisdn, refId, thirdPartyId
     const body = req.body || {};
     const data = body.data || body;
-    // Debug log (can be toggled off via env)
     if (process.env.WALLET_WEBHOOK_DEBUG === "1") {
-      // eslint-disable-next-line no-console
       console.log("[wallet-webhook] received:", data);
     }
-    // Prefer the id we originally sent (provider echoes it as thirdPartyId). Do not use provider RefId as our id.
     const thirdPartyId =
       data.thirdPartyId ||
       data.ID ||
@@ -163,16 +169,13 @@ exports.webhook = async (req, res) => {
       return res.status(400).json({ message: "Invalid webhook payload" });
 
     let tx = null;
-    // Try our refId match (we set refId to our transaction ID when creating the tx)
     if (thirdPartyId) {
       tx = await Transaction.findOne({ where: { refId: String(thirdPartyId) } });
     }
-    // Fallback to gateway txnId
     if (!tx && gwTxnId) {
       tx = await Transaction.findOne({ where: { txnId: String(gwTxnId) } });
     }
     if (process.env.WALLET_WEBHOOK_DEBUG === "1") {
-      // eslint-disable-next-line no-console
       console.log("[wallet-webhook] match:", {
         thirdPartyId,
         gwTxnId,
@@ -183,12 +186,10 @@ exports.webhook = async (req, res) => {
       });
     }
     if (!tx) {
-      // If not a wallet tx, try to update a subscription payment via shared webhook
       try {
         const { Subscription } = require("../models/indexModel");
         const rawStatus = (data.Status || data.status || "").toString().toUpperCase();
         const success = ["COMPLETED", "SUCCESS", "APPROVED"].includes(rawStatus);
-        // Match by thirdPartyId (we used subscription id) or by gateway txn id stored as payment_reference
         let subscription = null;
         if (thirdPartyId) subscription = await Subscription.findByPk(String(thirdPartyId));
         if (!subscription && gwTxnId) subscription = await Subscription.findOne({ where: { payment_reference: String(gwTxnId) } });
@@ -198,7 +199,6 @@ exports.webhook = async (req, res) => {
           return res.status(200).json({ ok: true, subscription_id: subscription.id, status: success ? "PAID" : "FAILED", gatewayTxnId: gwTxnId, shared: true });
         }
       } catch (_) {}
-      // Always ACK to avoid provider retries, but indicate not found
       return res.status(200).json({
         ok: false,
         message: "Transaction not found for webhook",
@@ -221,10 +221,8 @@ exports.webhook = async (req, res) => {
 
     const previousStatus = tx.status;
     tx.txnId = gwTxnId || tx.txnId;
-    // Keep our refId as initially set (our ObjectId), do not overwrite with provider's RefId
     tx.refId = tx.refId || (thirdPartyId && String(thirdPartyId));
     tx.status = normalizedStatus;
-    // Numeric fields from provider
     const n = (v) => (v == null ? undefined : Number(v));
     tx.commission = n(data.commission) ?? n(data.Commission) ?? tx.commission;
     tx.totalAmount =
@@ -247,12 +245,10 @@ exports.webhook = async (req, res) => {
     };
     tx.updatedAt = new Date();
 
-    // Idempotency: if already final state, do not re-apply wallet mutation
     const wasFinal =
       previousStatus === "success" || previousStatus === "failed";
     await tx.save();
     if (process.env.WALLET_WEBHOOK_DEBUG === "1") {
-      // eslint-disable-next-line no-console
       console.log("[wallet-webhook] updated tx:", {
         txId: String(tx._id),
         statusAfter: tx.status,
@@ -260,13 +256,11 @@ exports.webhook = async (req, res) => {
     }
 
     if (!wasFinal && normalizedStatus === "success") {
-      // For credits, prefer adjustedAmount (intended topup) then amount; for debits, prefer amount then adjustedAmount
       const providerAmount =
         tx.type === "credit"
           ? n(data.adjustedAmount) ?? n(data.amount) ?? tx.amount
           : n(data.amount) ?? n(data.adjustedAmount) ?? tx.amount;
       
-      // Find or create wallet and update balance
       let wallet = await Wallet.findOne({ where: { userId: tx.userId } });
       if (!wallet) {
         wallet = await Wallet.create({ userId: tx.userId, balance: 0 });
@@ -279,7 +273,6 @@ exports.webhook = async (req, res) => {
       }
       
       if (process.env.WALLET_WEBHOOK_DEBUG === "1") {
-        // eslint-disable-next-line no-console
         console.log("[wallet-webhook] wallet mutated:", {
           userId: tx.userId,
           type: tx.type,
@@ -288,7 +281,6 @@ exports.webhook = async (req, res) => {
       }
     }
 
-    // Respond with concise, important fields only
     return res.status(200).json({
       ok: true,
       txnId: data.TxnId || data.txnId,
@@ -306,9 +298,7 @@ exports.webhook = async (req, res) => {
       updatedBy: data.updatedBy || data.UpdatedBy,
     });
   } catch (e) {
-    // Always ACK with ok=false to prevent retries storms; log error
     if (process.env.WALLET_WEBHOOK_DEBUG === "1") {
-      // eslint-disable-next-line no-console
       console.error("[wallet-webhook] error:", e);
     }
     return res.status(200).json({ ok: false, error: e.message });
@@ -352,7 +342,6 @@ exports.transactions = async (req, res) => {
   }
 };
 
-// Admin helpers (MySQL implementation)
 exports.adminBalances = async (req, res) => {
   try {
     if (req.user.type !== 'admin') return res.status(403).json({ message: 'Access denied' });
@@ -387,7 +376,6 @@ exports.withdraw = async (req, res) => {
   }
 };
 
-// Debug endpoint to see MySQL storage
 exports.debug = async (req, res) => {
   try {
     const wallets = await Wallet.findAll();
@@ -406,4 +394,3 @@ exports.debug = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
-
