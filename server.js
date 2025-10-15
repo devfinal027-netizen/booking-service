@@ -20,6 +20,8 @@ app.set('trust proxy', 1); // Fix for X-Forwarded-For header (rate-limit behind 
 app.use(cors());
 app.use(helmet());
 app.use(express.json());
+// Parse URL-encoded form bodies (e.g., application/x-www-form-urlencoded)
+app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
 // Static file serving for uploads (e.g., payment option logos)
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
