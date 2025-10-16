@@ -162,4 +162,24 @@ describe('bookingSocket booking:cancel flow', () => {
     assert.deepStrictEqual(args.extras, { canceledBy: 'driver_pool', canceledReason: 'drivers_declined' });
     assert(dispatchRegistryStub.clearBookingDispatch.calledOnceWith('booking-1'));
   });
+
+  it('excludes accepted driver from booking:removed notification', async () => {
+    // Arrange: two dispatched drivers, driver-1 accepts
+    dispatchedDrivers = new Set(['driver-1', 'driver-2']);
+    bookingModelsStub.Booking.findById.resolves({ _id: 'booking-accept-1', status: 'requested' });
+    bookingServiceStub.updateBookingLifecycle.resolves({ _id: 'booking-accept-1', status: 'accepted', driverId: 'driver-1' });
+
+    const socket = setupSocket({ id: 'driver-1', type: 'driver' });
+
+    // Act
+    await socket.handlers['booking:accept']({ bookingId: 'booking-accept-1' });
+
+    // Assert: booking:removed sent only to driver-2
+    const calls = sendMessageStub.getCalls().map(c => c.args[0]);
+    const bookingRemovedCalls = sendMessageStub.getCalls().filter(c => c.args[1] && c.args[1].event === 'booking:removed');
+    // No direct send to accepted driver
+    assert(!calls.includes('driver:driver-1'));
+    // At least one send to other driver
+    assert(bookingRemovedCalls.some(c => c.args[0] === 'driver:driver-2'));
+  });
 });
