@@ -23,9 +23,17 @@ describe('trip:completed payload contains distanceTraveled', () => {
   let emitSocketErrorStub;
   let loggerStub;
   let ioStub;
+  let utilsStub;
 
   beforeEach(() => {
-    bookingEvents = require('../events/bookingEvents');
+    utilsStub = {
+      emitBookingTargets: sinon.stub(),
+      DEFAULT_OPS_ROOM: 'ops:booking'
+    };
+
+    bookingEvents = proxyquire('../events/bookingEvents', {
+      '../sockets/utils': utilsStub
+    });
 
     lifecycleStub = {
       completeTrip: sinon.stub().resolves({
@@ -87,8 +95,7 @@ describe('trip:completed payload contains distanceTraveled', () => {
     };
 
     // Directly invoke emitTripCompleted to confirm payload contains alias
-    const emitToRooms = require('../sockets/utils').emitToRooms;
-    const emitSpy = sinon.spy(require('../sockets/utils'), 'emitToRooms');
+    const emitSpy = utilsStub.emitBookingTargets;
     try {
       bookingEvents.emitTripCompleted({
         _id: 'b-1',
@@ -102,14 +109,14 @@ describe('trip:completed payload contains distanceTraveled', () => {
         driverId: 'd-1',
         passengerId: 'p-1'
       });
-
+      await new Promise((resolve) => setImmediate(resolve));
       assert(emitSpy.called, 'expected emitToRooms to be called');
       const callArg = emitSpy.getCalls().map(c => c.args[2]).find(p => p && p.bookingId === 'b-1');
       assert(callArg, 'expected a trip:completed payload');
       assert.strictEqual(callArg.distanceTraveled, 7.5);
       assert.strictEqual(callArg.distance, 7.5);
     } finally {
-      emitSpy.restore();
+      // no-op
     }
   });
 });
