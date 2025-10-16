@@ -73,7 +73,7 @@ describe('driver.controller.getLocationByPhone', () => {
       lastKnownLocation: { latitude: 8.9, longitude: 38.7, bearing: 90 },
       updatedAt: new Date('2025-10-10T12:00:00Z')
     };
-    DriverStub.findOne.withArgs({ phone }).returns(chainFindOneReturn(row));
+    DriverStub.findOne.callsFake(() => chainFindOneReturn(row));
     dispatchRegistryStub.getLiveLocation.withArgs('driver-1').returns({
       latitude: 9.001,
       longitude: 38.771,
@@ -105,7 +105,7 @@ describe('driver.controller.getLocationByPhone', () => {
       lastKnownLocation: { latitude: 8.8, longitude: 38.6 },
       updatedAt: new Date('2025-10-11T09:00:00Z')
     };
-    DriverStub.findOne.withArgs({ phone }).returns(chainFindOneReturn(row));
+    DriverStub.findOne.callsFake(() => chainFindOneReturn(row));
     dispatchRegistryStub.getLiveLocation.withArgs('driver-2').returns(null);
     bookingModelsStub.Live.findOne.returns(chainLiveFindOneReturn(null));
 
@@ -121,7 +121,7 @@ describe('driver.controller.getLocationByPhone', () => {
 
   it('returns 404 when driver is not found', async () => {
     const phone = '251933333333';
-    DriverStub.findOne.withArgs({ phone }).returns(chainFindOneReturn(null));
+    DriverStub.findOne.callsFake(() => chainFindOneReturn(null));
 
     const req = { params: { phone } };
     const res = makeRes();

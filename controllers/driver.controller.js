@@ -161,7 +161,20 @@ async function getLocationByPhone(req, res) {
     const phone = rawPhone.trim();
     if (!phone) return res.status(400).json({ message: 'phone is required' });
 
-    const row = await Driver.findOne({ phone })
+    // Basic phone validation: 8-15 digits, optional leading +, allow separators/spaces
+    const digitsOnly = phone.replace(/[^0-9]/g, '');
+    if (digitsOnly.length < 8 || digitsOnly.length > 15) {
+      return res.status(400).json({ message: 'phone must contain 8-15 digits' });
+    }
+
+    // Flexible lookup: try raw, +digits, digits
+    const orPhones = Array.from(new Set([
+      phone,
+      `+${digitsOnly}`,
+      digitsOnly
+    ]));
+
+    const row = await Driver.findOne({ $or: orPhones.map(p => ({ phone: p })) })
       .select({ _id: 1, name: 1, phone: 1, available: 1, lastKnownLocation: 1, updatedAt: 1 })
       .lean();
     if (!row) return res.status(404).json({ message: 'Driver not found' });
@@ -209,6 +222,10 @@ async function getLocationByPhone(req, res) {
         ...(row.lastKnownLocation.bearing != null ? { bearing: Number(row.lastKnownLocation.bearing) } : {})
       };
       source = 'db';
+    }
+
+    if (!location) {
+      return res.status(404).json({ message: 'Location not found for driver' });
     }
 
     return res.json({
