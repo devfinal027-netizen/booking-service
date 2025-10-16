@@ -84,6 +84,7 @@ exports.getWeeklyReport = async (req, res) => {
       commission: Number(r.fareFinal || r.fareEstimated || 0) * (commissionRate / 100),
       status: r.status,
       vehicleType: r.vehicleType,
+      
       distanceKm: Number(r.distanceKm || 0),
       _id: r._id
     }));
@@ -158,6 +159,9 @@ exports.getMonthlyReport = async (req, res) => {
     const rideDetails = rideDetailsRaw.map(x => ({
       ...x,
       driver: x.driverId ? (driverMap[String(x.driverId)] || { id: String(x.driverId) }) : undefined,
+      driverName: x.driverId ? (driverMap[String(x.driverId)]?.name || '') : '',
+      driverPhone: x.driverId ? (driverMap[String(x.driverId)]?.phone || '') : '',
+      driverEmail: x.driverId ? (driverMap[String(x.driverId)]?.email || '') : '',
       passenger: x.passengerId ? (passengerMap[String(x.passengerId)] || { id: String(x.passengerId) }) : undefined
     }));
 
