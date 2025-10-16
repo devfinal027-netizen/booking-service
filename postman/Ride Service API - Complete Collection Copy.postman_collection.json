@@ -1,23 +1,42 @@
 {
-	"info": {
-		"_postman_id": "5be35b59-c6ac-4de2-a960-691e41ad1dad",
-		"name": "Ride Service API - Complete Collection Copy",
+  "info": {
+    "_postman_id": "5be35b59-c6ac-4de2-a960-691e41ad1dad",
+    "name": "Ride Service API - Complete Collection Copy",
 		"description": "Comprehensive API collection for ride service with organized folders, all endpoints, and axios integration",
-		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-		"_exporter_id": "24624704",
-		"_collection_link": "https://lunar-eclipse-303269.postman.co/workspace/2fca546d-3b99-4f54-8acb-523fdaa9f75b/collection/24624704-5be35b59-c6ac-4de2-a960-691e41ad1dad?action=share&source=collection_link&creator=24624704"
-	},
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "24624704",
+    "_collection_link": "https://lunar-eclipse-303269.postman.co/workspace/2fca546d-3b99-4f54-8acb-523fdaa9f75b/collection/24624704-5be35b59-c6ac-4de2-a960-691e41ad1dad?action=share&source=collection_link&creator=24624704"
+  },
 	"auth": {
 		"type": "bearer",
 		"bearer": [
 			{ "key": "token", "value": "{{token}}", "type": "string" }
 		]
 	},
-	"item": [
+  "item": [
+    {
+            "name": "Admin Analytics (Complete)",
+      "item": [
+                { "name": "Dashboard", "request": { "method": "GET", "header": [ { "key": "Authorization", "value": "Bearer {{adminToken}}" } ], "url": { "raw": "{{baseUrl}}/v1/analytics/dashboard", "host": ["{{baseUrl}}"], "path": ["v1","analytics","dashboard"] } } },
+                { "name": "Daily Report", "request": { "method": "GET", "header": [ { "key": "Authorization", "value": "Bearer {{adminToken}}" } ], "url": { "raw": "{{baseUrl}}/v1/analytics/reports/daily?date=2024-01-15", "host": ["{{baseUrl}}"], "path": ["v1","analytics","reports","daily"], "query": [ {"key":"date","value":"2024-01-15"} ] } } },
+                { "name": "Weekly Report", "request": { "method": "GET", "header": [ { "key": "Authorization", "value": "Bearer {{adminToken}}" } ], "url": { "raw": "{{baseUrl}}/v1/analytics/reports/weekly?week=2024-W03", "host": ["{{baseUrl}}"], "path": ["v1","analytics","reports","weekly"], "query": [ {"key":"week","value":"2024-W03"} ] } } },
+                { "name": "Monthly Report", "request": { "method": "GET", "header": [ { "key": "Authorization", "value": "Bearer {{adminToken}}" } ], "url": { "raw": "{{baseUrl}}/v1/analytics/reports/monthly?month=2024-01", "host": ["{{baseUrl}}"], "path": ["v1","analytics","reports","monthly"], "query": [ {"key":"month","value":"2024-01"} ] } } },
+                
+                { "name": "Driver Earnings (by Admin)", "request": { "method": "GET", "header": [ { "key": "Authorization", "value": "Bearer {{adminToken}}" } ], "url": { "raw": "{{baseUrl}}/v1/analytics/earnings/driver?driverId={{driverId}}&period=monthly", "host": ["{{baseUrl}}"], "path": ["v1","analytics","earnings","driver"], "query": [ {"key":"driverId","value":"{{driverId}}"}, {"key":"period","value":"monthly"} ] } } },
+                { "name": "Get Commission", "request": { "method": "GET", "header": [ { "key": "Authorization", "value": "Bearer {{adminToken}}" } ], "url": { "raw": "{{baseUrl}}/v1/analytics/commission", "host": ["{{baseUrl}}"], "path": ["v1","analytics","commission"] } } },
+                { "name": "Set Commission", "request": { "method": "POST", "header": [ { "key": "Authorization", "value": "Bearer {{adminToken}}" }, { "key": "Content-Type", "value": "application/json" } ], "body": { "mode": "raw", "raw": "{\n  \"percentage\": 15\n}" }, "url": { "raw": "{{baseUrl}}/v1/analytics/commission", "host": ["{{baseUrl}}"], "path": ["v1","analytics","commission"] } } },
+                { "name": "Ride History (All Roles)", "request": { "method": "GET", "header": [ { "key": "Authorization", "value": "Bearer {{adminToken}}" } ], "url": { "raw": "{{baseUrl}}/v1/analytics/rides/history?page=1&limit=50", "host": ["{{baseUrl}}"], "path": ["v1","analytics","rides","history"], "query": [ {"key":"page","value":"1"}, {"key":"limit","value":"50"} ] } } },
+                { "name": "Trips by User ID (Integration)", "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/v1/analytics/trips/history/driver/{{driverId}}?status=completed", "host": ["{{baseUrl}}"], "path": ["v1","analytics","trips","history","driver","{{driverId}}"], "query": [ {"key":"status","value":"completed"} ] } } },
+                { "name": "Finance Overview", "request": { "method": "GET", "header": [ { "key": "Authorization", "value": "Bearer {{adminToken}}" } ], "url": { "raw": "{{baseUrl}}/v1/analytics/finance/overview?period=monthly", "host": ["{{baseUrl}}"], "path": ["v1","analytics","finance","overview"], "query": [ {"key":"period","value":"monthly"} ] } } },
+                { "name": "Passenger Rewards", "request": { "method": "GET", "header": [ { "key": "Authorization", "value": "Bearer {{adminToken}}" } ], "url": { "raw": "{{baseUrl}}/v1/analytics/rewards/passenger?passengerId={{passengerId}}", "host": ["{{baseUrl}}"], "path": ["v1","analytics","rewards","passenger"], "query": [ {"key":"passengerId","value":"{{passengerId}}"} ] } } },
+                { "name": "Driver Rewards", "request": { "method": "GET", "header": [ { "key": "Authorization", "value": "Bearer {{adminToken}}" } ], "url": { "raw": "{{baseUrl}}/v1/analytics/rewards/driver?driverId={{driverId}}", "host": ["{{baseUrl}}"], "path": ["v1","analytics","rewards","driver"], "query": [ {"key":"driverId","value":"{{driverId}}"} ] } } },
+                { "name": "Configure Rewards", "request": { "method": "POST", "header": [ { "key": "Authorization", "value": "Bearer {{adminToken}}" }, { "key": "Content-Type", "value": "application/json" } ], "body": { "mode": "raw", "raw": "{\n  \"role\": \"driver\",\n  \"perKm\": 2,\n  \"currency\": \"ETB\"\n}" }, "url": { "raw": "{{baseUrl}}/v1/analytics/rewards/config", "host": ["{{baseUrl}}"], "path": ["v1","analytics","rewards","config"] } } }
+            ]
+        },
         {
             "name": "🧩 Socket.IO Events",
-            "item": [
-                {
+          "item": [
+            {
                     "name": "Socket Connect (Passenger)",
                     "request": {
                         "method": "GET",
@@ -30,8 +49,8 @@
                 },
 				{
 					"name": "booking:request (Passenger)",
-                    "request": {
-                        "method": "POST",
+              "request": {
+                "method": "POST",
 						"header": [ { "key": "X-Postman-Note", "value": "Socket.IO emit: booking:request" } ],
 						"body": { "mode": "raw", "raw": "{\n  \"vehicleType\": \"mini\",\n  \"pickup\": { \"latitude\": 40.7128, \"longitude\": -74.0060 },\n  \"dropoff\": { \"latitude\": 40.7589, \"longitude\": -73.9851 }\n}" },
 						"url": { "raw": "socketio://emit/booking:request" }
@@ -319,8 +338,8 @@
 							}
 						}
 					],
-					"request": {
-						"method": "POST",
+              "request": {
+                "method": "POST",
 						"header": [
 							{
 								"key": "Content-Type",
@@ -450,19 +469,19 @@
 								}
 							},
 							"response": []
-						},
-						{
-							"name": "Find Available Drivers (Legacy)",
-							"request": {
-								"method": "GET",
+            },
+            {
+              "name": "Find Available Drivers (Legacy)",
+              "request": {
+                "method": "GET",
 								"header": [
 									{
 										"key": "Authorization",
 										"value": "Bearer {{passengerToken}}"
 									}
 								],
-								"url": {
-									"raw": "{{baseUrl}}/v1/drivers/available?latitude=40.7128&longitude=-74.0060&radiusKm=5&vehicleType=mini",
+                "url": {
+                  "raw": "{{baseUrl}}/v1/drivers/available?latitude=40.7128&longitude=-74.0060&radiusKm=5&vehicleType=mini",
 									"host": [
 										"{{baseUrl}}"
 									],
@@ -471,7 +490,7 @@
 										"drivers",
 										"available"
 									],
-									"query": [
+                  "query": [
 										{
 											"key": "latitude",
 											"value": "40.7128"
@@ -492,12 +511,12 @@
 								}
 							},
 							"response": []
-						}
-					]
-				},
-				{
+            }
+          ]
+        },
+        {
 					"name": "💰 Fare Estimation",
-					"item": [
+          "item": [
 						{
 							"name": "Estimate Fare",
 							"request": {
@@ -544,7 +563,7 @@
 				},
 				{
 					"name": "📱 Booking Management",
-					"item": [
+          "item": [
 						{
 							"name": "Create Booking",
 							"event": [
@@ -592,10 +611,10 @@
 								}
 							},
 							"response": []
-						}
-					]
-				},
-				{
+        }
+      ]
+    },
+    {
 					"name": "Get My Bookings",
 					"event": [
 						{
@@ -821,10 +840,10 @@
 		},
 		{
 			"name": "🚗 Driver APIs",
-			"item": [
-				{
+      "item": [
+        {
 					"name": "👤 Driver Management",
-					"item": [
+          "item": [
 						{
 							"name": "Set Driver Availability",
 							"request": {
@@ -905,7 +924,7 @@
 				},
 				{
 					"name": "📱 Booking Management",
-					"item": [
+          "item": [
 						{
 							"name": "Get Nearby Bookings",
 							"request": {
@@ -1031,7 +1050,7 @@
 				},
 				{
 					"name": "Driver Earnings",
-					"item": [
+          "item": [
 						{
 							"name": "Get My Earnings (Daily)",
 							"request": {
@@ -1129,7 +1148,7 @@
 				},
 				{
 					"name": "Driver Ride History",
-					"item": [
+          "item": [
 						{
 							"name": "Get My Ride History",
 							"request": {
@@ -1169,7 +1188,7 @@
 				},
 				{
 					"name": "Live (Position Updates)",
-					"item": [
+          "item": [
 						{
 							"name": "Driver Push Current Position",
 							"request": {
@@ -1240,10 +1259,10 @@
 		},
 		{
 			"name": "👨‍💼 Admin/Staff APIs",
-			"item": [
-				{
+      "item": [
+        {
 					"name": "👥 User Management",
-					"item": [
+          "item": [
 						{
 							"name": "Passenger Management",
 							"item": [
@@ -1414,7 +1433,7 @@
 						},
 						{
 							"name": "Driver Management",
-							"item": [
+          "item": [
 								{
 									"name": "List All Drivers",
 									"request": {
@@ -1482,10 +1501,10 @@
 				},
 				{
 					"name": "📋 Booking & Trip Management",
-					"item": [
-						{
+          "item": [
+            {
 							"name": "Booking Management",
-							"item": [
+              "item": [
 								{
 									"name": "List All Bookings",
 									"request": {
@@ -1625,7 +1644,7 @@
 						},
 						{
 							"name": "Assignment Management",
-							"item": [
+          "item": [
 								{
 									"name": "Create Assignment",
 									"event": [
@@ -1792,7 +1811,7 @@
 						},
 						{
 							"name": "Trip Management",
-							"item": [
+          "item": [
 								{
 									"name": "Create Trip History",
 									"event": [
@@ -1961,7 +1980,7 @@
 				},
 				{
 					"name": "💰 Pricing Management",
-					"item": [
+          "item": [
 						{
 							"name": "Create Pricing - Mini",
 							"event": [
@@ -2152,7 +2171,7 @@
 				},
 				{
 					"name": "📊 Analytics & Reports",
-					"item": [
+          "item": [
 						{
 							"name": "Commission Management",
 							"item": [
@@ -2216,7 +2235,7 @@
 						},
 						{
 							"name": "Driver Earnings Management",
-							"item": [
+          "item": [
 								{
 									"name": "Get Driver Earnings",
 									"request": {
@@ -2260,7 +2279,7 @@
 						},
 						{
 							"name": "Ride History Management",
-							"item": [
+          "item": [
 								{
 									"name": "Get All Ride History",
 									"request": {
@@ -2472,7 +2491,7 @@
 				},
 				{
 					"name": "📍 Live Updates Management",
-					"item": [
+          "item": [
 						{
 							"name": "Create Live Update (Admin)",
 							"event": [
@@ -2642,7 +2661,7 @@
 		},
         {
 			"name": "💳 Wallet",
-			"item": [
+          "item": [
 				{
 					"name": "Topup Wallet (SantimPay DirectPayment)",
 					"request": {
@@ -2921,6 +2940,6 @@
 		{
 			"key": "baseurl",
 			"value": ""
-		}
-	]
+    }
+  ]
 }

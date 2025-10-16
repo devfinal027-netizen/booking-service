@@ -6,6 +6,38 @@ const { Commission, DriverEarnings, AdminEarnings, Payout, RewardRate } = requir
 const { DailyReport, WeeklyReport, MonthlyReport, Complaint } = require('../models/analytics');
 const { Wallet, Transaction } = require('../models/common');
 
+// Helper: build driver/passenger maps and attach full user objects without changing existing shapes
+async function buildUserMaps(driverIdsRaw, passengerIdsRaw) {
+  const { Driver, Passenger } = require('../models/userModels');
+  const { Types } = require('mongoose');
+  const uniq = (arr) => Array.from(new Set((arr || []).filter(Boolean).map(String)));
+  const driverIds = uniq(driverIdsRaw).filter(id => Types.ObjectId.isValid(id));
+  const passengerIds = uniq(passengerIdsRaw).filter(id => Types.ObjectId.isValid(id));
+  let driverMap = {}, passengerMap = {};
+  try {
+    if (driverIds.length) {
+      const rows = await Driver.find({ _id: { $in: driverIds } })
+        .select({ _id: 1, name: 1, phone: 1, email: 1, vehicleType: 1, carName: 1, carModel: 1, carPlate: 1, carColor: 1 })
+        .lean();
+      driverMap = Object.fromEntries(rows.map(d => [String(d._id), {
+        id: String(d._id), name: d.name, phone: d.phone, email: d.email,
+        vehicleType: d.vehicleType, carName: d.carName, carModel: d.carModel, carPlate: d.carPlate, carColor: d.carColor
+      }]));
+    }
+  } catch (_) {}
+  try {
+    if (passengerIds.length) {
+      const rows = await Passenger.find({ _id: { $in: passengerIds } })
+        .select({ _id: 1, name: 1, phone: 1, email: 1 })
+        .lean();
+      passengerMap = Object.fromEntries(rows.map(p => [String(p._id), {
+        id: String(p._id), name: p.name, phone: p.phone, email: p.email
+      }]));
+    }
+  } catch (_) {}
+  return { driverMap, passengerMap };
+}
+
 // Dashboard Statistics
 exports.getDashboardStats = async (req, res) => {
   try {
@@ -172,7 +204,7 @@ exports.getDailyReport = async (req, res) => {
     }).populate('driverId passengerId').lean();
     logger.info('[analytics.daily] enrich details', { count: ridesForDetails.length });
 
-    const rideDetails = ridesForDetails.map(r => ({
+    const rideDetailsRaw = ridesForDetails.map(r => ({
       bookingId: r._id,
       driverId: String(r.driverId?._id || r.driverId || ''),
       driverName: r.driverId && typeof r.driverId === 'object' ? r.driverId.name : r.driverName,
@@ -188,6 +220,12 @@ exports.getDailyReport = async (req, res) => {
       vehicleType: r.vehicleType,
       distanceKm: Number(r.distanceKm || 0),
       _id: r._id
+    }));
+    const { driverMap: dailyDriverMap, passengerMap: dailyPassengerMap } = await buildUserMaps(rideDetailsRaw.map(x => x.driverId), rideDetailsRaw.map(x => x.passengerId));
+    const rideDetails = rideDetailsRaw.map(x => ({
+      ...x,
+      driver: x.driverId ? (dailyDriverMap[String(x.driverId)] || { id: String(x.driverId) }) : undefined,
+      passenger: x.passengerId ? (dailyPassengerMap[String(x.passengerId)] || { id: String(x.passengerId) }) : undefined
     }));
 
     const payload = report && typeof report.toObject === 'function' ? report.toObject() : report;
@@ -270,7 +308,7 @@ exports.getWeeklyReport = async (req, res) => {
     } catch (_) {}
 
     // Enrich ride details with user information
-    const rideDetails = rides.map(r => ({
+    const rideDetailsRawW = rides.map(r => ({
       bookingId: r._id,
       driverId: String(r.driverId?._id || r.driverId || ''),
       driverName: r.driverId && typeof r.driverId === 'object' ? r.driverId.name : r.driverName,
@@ -286,6 +324,12 @@ exports.getWeeklyReport = async (req, res) => {
       vehicleType: r.vehicleType,
       distanceKm: Number(r.distanceKm || 0),
       _id: r._id
+    }));
+    const { driverMap: weeklyDriverMap, passengerMap: weeklyPassengerMap } = await buildUserMaps(rideDetailsRawW.map(x => x.driverId), rideDetailsRawW.map(x => x.passengerId));
+    const rideDetails = rideDetailsRawW.map(x => ({
+      ...x,
+      driver: x.driverId ? (weeklyDriverMap[String(x.driverId)] || { id: String(x.driverId) }) : undefined,
+      passenger: x.passengerId ? (weeklyPassengerMap[String(x.passengerId)] || { id: String(x.passengerId) }) : undefined
     }));
 
     res.json({
@@ -352,7 +396,7 @@ exports.getMonthlyReport = async (req, res) => {
     }).populate('driverId passengerId').lean();
     logger.info('[analytics.monthly] enrich details', { count: ridesForDetails.length, month: targetMonth, year: targetYear });
 
-    const rideDetails = ridesForDetails.map(r => ({
+    const rideDetailsRawM = ridesForDetails.map(r => ({
       bookingId: r._id,
       driverId: String(r.driverId?._id || r.driverId || ''),
       driverName: r.driverId && typeof r.driverId === 'object' ? r.driverId.name : r.driverName,
@@ -368,6 +412,12 @@ exports.getMonthlyReport = async (req, res) => {
       vehicleType: r.vehicleType,
       distanceKm: Number(r.distanceKm || 0),
       _id: r._id
+    }));
+    const { driverMap: monthlyDriverMap, passengerMap: monthlyPassengerMap } = await buildUserMaps(rideDetailsRawM.map(x => x.driverId), rideDetailsRawM.map(x => x.passengerId));
+    const rideDetails = rideDetailsRawM.map(x => ({
+      ...x,
+      driver: x.driverId ? (monthlyDriverMap[String(x.driverId)] || { id: String(x.driverId) }) : undefined,
+      passenger: x.passengerId ? (monthlyPassengerMap[String(x.passengerId)] || { id: String(x.passengerId) }) : undefined
     }));
 
     const payload = report && typeof report.toObject === 'function' ? report.toObject() : report;
@@ -499,7 +549,7 @@ exports.getCombinedReports = async (req, res) => {
       .lean();
     logger.info('[analytics.combined] rideDetails', { count: ridesForDetails.length });
     const rideCommissionRate = Number(process.env.COMMISSION_RATE || 15);
-    const rideDetails = ridesForDetails.map(r => ({
+    const rideDetailsRawC = ridesForDetails.map(r => ({
       bookingId: r._id,
       driverId: String(r.driverId?._id || r.driverId || ''),
       driverName: r.driverId && typeof r.driverId === 'object' ? r.driverId.name : r.driverName,
@@ -513,6 +563,12 @@ exports.getCombinedReports = async (req, res) => {
       vehicleType: r.vehicleType,
       distanceKm: Number(r.distanceKm || 0),
       _id: r._id
+    }));
+    const { driverMap: combinedDriverMap, passengerMap: combinedPassengerMap } = await buildUserMaps(rideDetailsRawC.map(x => x.driverId), rideDetailsRawC.map(x => x.passengerId));
+    const rideDetails = rideDetailsRawC.map(x => ({
+      ...x,
+      driver: x.driverId ? (combinedDriverMap[String(x.driverId)] || { id: String(x.driverId) }) : undefined,
+      passenger: x.passengerId ? (combinedPassengerMap[String(x.passengerId)] || { id: String(x.passengerId) }) : undefined
     }));
 
     res.json({

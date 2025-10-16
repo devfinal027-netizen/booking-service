@@ -28,7 +28,8 @@ This guide distills the driver-facing portion of the booking service socket cont
 | `booking:ETA_update` (live namespace) | `{ bookingId, etaMinutes, message? }` | Broadcast to `booking:{id}` | `booking_error` (`FORBIDDEN`, `VALIDATION_ERROR`) | Only while assigned to booking |
 
 ### Server → driver events
-- **Dispatch & availability**: `booking:nearby`, `booking:new`, `booking:removed`, `driver:availability`
+- **Dispatch & availability**: `booking:nearby`,
+ `booking:new`, `booking:removed`, `driver:availability`
 - **Lifecycle**: `booking:update`, `trip:started`, `trip:ongoing`, `trip:completed`
 - **Live location**: `booking:driver_location`, `booking:driver_location_ack`
 - **Pricing**: `pricing:update`, `pricing:error`
