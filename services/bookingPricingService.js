@@ -4,6 +4,7 @@ const { emitBookingTargets } = require('../sockets/utils');
 const logger = require('../utils/logger');
 const metrics = require('../utils/metrics');
 const geolib = require('geolib');
+const axios = require('axios');
 
 // Legacy function - maintained for backward compatibility
 async function recalcForBooking(bookingId) {
@@ -319,8 +320,73 @@ async function calculateLivePricing(bookingId, currentLocation) {
   }
 }
 
+async function fetchEtaUsingGoogle({ origin, destination, apiKey }) {
+  if (!origin || !destination) {
+    const err = new Error('origin and destination are required');
+    err.status = 400;
+    throw err;
+  }
+  const { latitude: oLat, longitude: oLng } = origin;
+  const { latitude: dLat, longitude: dLng } = destination;
+  const base = 'https://maps.googleapis.com/maps/api/distancematrix/json';
+  const url = `${base}?origins=${oLat},${oLng}&destinations=${dLat},${dLng}&mode=driving&departure_time=now&traffic_model=best_guess&key=${encodeURIComponent(apiKey)}`;
+  const resp = await axios.get(url, { timeout: 6000 });
+  const row = resp && resp.data && Array.isArray(resp.data.rows) && resp.data.rows[0] && resp.data.rows[0].elements && resp.data.rows[0].elements[0];
+  const status = row && row.status;
+  if (!row || status !== 'OK') {
+    const reason = status || 'UNKNOWN';
+    const err = new Error(`Distance Matrix error: ${reason}`);
+    err.code = reason;
+    throw err;
+  }
+  const duration = row.duration_in_traffic || row.duration;
+  return {
+    etaSeconds: duration && Number.isFinite(duration.value) ? Number(duration.value) : undefined,
+    etaText: duration && duration.text ? String(duration.text) : undefined
+  };
+}
+
+async function calculateAndBroadcastEta({ booking, driverLocation, io }) {
+  try {
+    if (!booking || !driverLocation) return;
+    const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || process.env.GMAPS_API_KEY;
+    if (!GOOGLE_MAPS_API_KEY) return;
+
+    const dest = (booking.startedAt ? booking.dropoff : booking.pickup) || booking.dropoff || booking.pickup;
+    if (!dest || dest.latitude == null || dest.longitude == null) return;
+
+    const origin = { latitude: Number(driverLocation.latitude), longitude: Number(driverLocation.longitude) };
+    const destination = { latitude: Number(dest.latitude), longitude: Number(dest.longitude) };
+
+    const { etaSeconds, etaText } = await fetchEtaUsingGoogle({ origin, destination, apiKey: GOOGLE_MAPS_API_KEY });
+    if (!etaSeconds) return;
+
+    const payload = {
+      bookingId: String(booking._id),
+      etaSeconds,
+      etaText,
+      driverLocation: origin,
+      destination
+    };
+    const roomBooking = `booking:${String(booking._id)}`;
+    const roomDriver = booking.driverId ? `driver:${String(booking.driverId)}` : undefined;
+    const roomPassenger = booking.passengerId ? `passenger:${String(booking.passengerId)}` : undefined;
+    if (io) {
+      try { io.to(roomBooking).emit('eta:update', payload); } catch (_) {}
+      if (roomDriver) { try { io.to(roomDriver).emit('eta:update', payload); } catch (_) {} }
+      if (roomPassenger) { try { io.to(roomPassenger).emit('eta:update', payload); } catch (_) {} }
+    }
+    try { metrics.increment('eta.update_sent', 1, { vehicleType: booking.vehicleType || 'unknown' }); } catch (_) {}
+  } catch (e) {
+    try { logger.warn('[eta] calculate/broadcast failed', { error: e && e.message }); } catch (_) {}
+    try { metrics.increment('eta.update_error', 1, { reason: e && e.code ? e.code : (e && e.message) || 'unknown' }); } catch (_) {}
+  }
+}
+
 module.exports = { 
   recalcForBooking,
-  calculateLivePricing
+  calculateLivePricing,
+  fetchEtaUsingGoogle,
+  calculateAndBroadcastEta
 };
 

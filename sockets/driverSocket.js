@@ -631,6 +631,16 @@ try {
             );
           }
 
+          // Trigger ETA broadcast for each active booking with throttling handled outside
+          try {
+            const { calculateAndBroadcastEta } = require('../services/bookingPricingService');
+            const { getIo } = require('./utils');
+            const ioRef = getIo && getIo();
+            for (const booking of activeBookings) {
+              await calculateAndBroadcastEta({ booking, driverLocation: { latitude: data.latitude, longitude: data.longitude }, io: ioRef });
+            }
+          } catch (_) {}
+
           ackPayload.processedBookings = payloads.map((entry) => entry.bookingId);
           ackPayload.liveWrite = liveWriteError ? 'failed' : 'persisted';
         }

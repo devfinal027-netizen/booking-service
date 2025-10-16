@@ -63,11 +63,26 @@ module.exports = (io, socket) => {
     try { logger.info('[socket<-passenger] booking:request', { sid: socket.id, userId: socket.user && socket.user.id }); } catch (_) {}
     try {
       const data = typeof payload === 'string' ? JSON.parse(payload) : (payload || {});
-      if (!socket.user || String(socket.user.type).toLowerCase() !== 'passenger') {
-        emitSocketError(socket, 'booking_error', 'UNAUTHORIZED', 'Unauthorized: passenger token required', { source: 'booking:request' });
+      const requesterType = socket.user && socket.user.type ? String(socket.user.type).toLowerCase() : undefined;
+      if (!socket.user || !requesterType) {
+        emitSocketError(socket, 'booking_error', 'UNAUTHORIZED', 'Unauthorized: user token required', { source: 'booking:request' });
         return;
       }
-      const passengerId = String(socket.user.id);
+
+      // Determine passengerId based on requester type
+      let passengerId;
+      if (requesterType === 'passenger') {
+        passengerId = String(socket.user.id);
+      } else if (requesterType === 'admin' || requesterType === 'superadmin') {
+        if (!data.passengerId) {
+          emitSocketError(socket, 'booking_error', 'VALIDATION_ERROR', 'passengerId is required when creating a booking as an admin', { source: 'booking:request' });
+          return;
+        }
+        passengerId = String(data.passengerId);
+      } else {
+        emitSocketError(socket, 'booking_error', 'UNAUTHORIZED', 'Unauthorized: only passenger or admin can create booking', { source: 'booking:request' });
+        return;
+      }
       const booking = await bookingService.createBooking({
         passengerId,
         jwtUser: socket.user,

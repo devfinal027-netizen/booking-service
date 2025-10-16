@@ -24,6 +24,13 @@ async function emitActiveBookings(socket) {
         status: b.status
       }));
 
+    // Join booking rooms immediately for active bookings to avoid UI delay
+    for (const b of activeBookings) {
+      if (b && b.id) {
+        try { socket.join(`booking:${String(b.id)}`); } catch (_) {}
+      }
+    }
+
     // Always enrich with driver snapshots for any booking with a driverId to ensure full car details
     const uniqueDriverIds = [...new Set(activeBookings
       .filter(b => b && b.driverId)
@@ -53,12 +60,6 @@ async function emitActiveBookings(socket) {
         driver: (b.driverId ? driverMap[String(b.driverId)] : undefined) || b.driver
       };
     });
-
-    for (const booking of enriched) {
-      if (booking && booking.id) {
-        try { socket.join(`booking:${String(booking.id)}`); } catch (_) {}
-      }
-    }
 
     // Emit passenger + enriched bookings. Include top-level passenger info and single-driver shortcut when applicable.
     const passengerPayload = { id: String(user.id), type: 'passenger' };
