@@ -24,25 +24,35 @@ async function emitActiveBookings(socket) {
         status: b.status
       }));
 
-    // Enrich bookings with driver snapshots when assigned but only fetch for bookings missing driver details
+    // Always enrich with driver snapshots for any booking with a driverId to ensure full car details
     const uniqueDriverIds = [...new Set(activeBookings
-      .filter(b => b && b.driverId && !b.driver)
+      .filter(b => b && b.driverId)
       .map(b => b.driverId)
     )];
     const driverMap = {};
     if (uniqueDriverIds.length) {
+      const timeoutMs = Number(process.env.DRIVER_SNAPSHOT_TIMEOUT_MS || 50);
       await Promise.all(uniqueDriverIds.map(async (did) => {
         try {
-          const snap = await buildDriverSnapshot(did, { fallbackUser: user, fallbackVehicleType: undefined });
+          const snap = await Promise.race([
+            buildDriverSnapshot(did, { fallbackUser: user, fallbackVehicleType: undefined }),
+            new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs))
+          ]);
           if (snap) driverMap[String(did)] = snap;
         } catch (e) { /* ignore */ }
       }));
     }
 
-    const enriched = activeBookings.map(b => ({
-      ...b,
-      driver: b.driver || (b.driverId ? driverMap[String(b.driverId)] : undefined)
-    }));
+    const enriched = activeBookings.map(b => {
+      const roundedFareEstimated = b.fareEstimated != null ? Number(Number(b.fareEstimated).toFixed(2)) : undefined;
+      const roundedFareFinal = b.fareFinal != null ? Number(Number(b.fareFinal).toFixed(2)) : undefined;
+      return {
+        ...b,
+        ...(roundedFareEstimated != null ? { fareEstimated: roundedFareEstimated } : {}),
+        ...(roundedFareFinal != null ? { fareFinal: roundedFareFinal } : {}),
+        driver: (b.driverId ? driverMap[String(b.driverId)] : undefined) || b.driver
+      };
+    });
 
     for (const booking of enriched) {
       if (booking && booking.id) {
@@ -56,7 +66,7 @@ async function emitActiveBookings(socket) {
     if (user.phone) passengerPayload.phone = user.phone;
     if (user.email) passengerPayload.email = user.email;
 
-    const uniqueDrivers = Object.values(driverMap);
+    const uniqueDrivers = Object.values(driverMap).filter(Boolean);
     const topLevelDriver = uniqueDrivers.length === 1 ? uniqueDrivers[0] : undefined;
 
     socket.emit('booking:active_snapshot', {

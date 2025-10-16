@@ -121,7 +121,7 @@ exports.topup = async (req, res) => {
       } catch (e) {
         console.error('Error resolving driver payment preferences:', e);
       }
-      const err = new Error('paymentMethod is required and no driver payment preference is set');
+      const err = new Error('paymentMethod is required. Provide paymentMethod in request body or set a default payment preference');
       err.status = 400;
       throw err;
     }
@@ -472,7 +472,7 @@ exports.withdraw = async (req, res) => {
           const name = me && me.paymentPreference && me.paymentPreference.name ? String(me.paymentPreference.name).trim() : null;
           if (name) return name;
         } catch (_) {}
-        const err = new Error('paymentMethod is required and no driver payment preference is set');
+        const err = new Error('paymentMethod is required. Provide paymentMethod in request body or set a default payment preference');
         err.status = 400;
         throw err;
       }

@@ -16,6 +16,7 @@ const {
 
 const DRIVER_ACTIVE_STATUSES = new Set(['accepted', 'ongoing']);
 
+// This is the driver-side socket handler
 module.exports = (io, socket) => {
   // On connection, send initial nearby unassigned bookings (pre-existing) and current driver bookings
   try {
@@ -54,7 +55,7 @@ module.exports = (io, socket) => {
       (async () => {
         try {
           const { Booking } = require('../models/bookingModels');
-          const { Driver } = require('../models/userModels');
+          const { Driver } = require('../models/userModels'); // Re-import Driver model
           const { Wallet } = require('../models/common');
           const financeService = require('../services/financeService');
           const geolib = require('geolib');
@@ -82,6 +83,7 @@ module.exports = (io, socket) => {
             pickup: b.pickup,
             dropoff: b.dropoff,
             fareEstimated: b.fareEstimated,
+            currentFare: b.currentFare,
             fareFinal: b.fareFinal,
             distanceKm: b.distanceKm,
             passenger: b.passengerId ? { id: String(b.passengerId), name: b.passengerName, phone: b.passengerPhone } : undefined,
@@ -140,6 +142,7 @@ module.exports = (io, socket) => {
                     pickup: dispatchDoc.pickup,
                     dropoff: dispatchDoc.dropoff,
                     fareEstimated: dispatchDoc.fareEstimated,
+                    currentFare: dispatchDoc.currentFare,
                     fareFinal: dispatchDoc.fareFinal,
                     distanceKm: dispatchDoc.distanceKm,
                     createdAt: dispatchDoc.createdAt,
@@ -217,6 +220,7 @@ try {
       pickup: x.booking.pickup,
       dropoff: x.booking.dropoff,
       fareEstimated: x.booking.fareEstimated,
+      currentFare: x.booking.currentFare,
       fareFinal: x.booking.fareFinal,
       distanceKm: Math.round(x.distanceKm * 100) / 100,
       // Keep passenger format as original: { id, name, phone }
@@ -240,8 +244,39 @@ try {
 
           try {
             const activeCurrentBookings = currentBookings.filter(b => DRIVER_ACTIVE_STATUSES.has(String(b.status || '').toLowerCase()));
+
+            // --- START OF MODIFICATION ---
+            // Fetch full driver details for active bookings to include carPlate and carColor
+            // Ensure we exclude undefined driverIds to avoid querying with "undefined"
+            const driverIdsInActiveBookings = [...new Set(activeCurrentBookings.map(b => b.driverId).filter(Boolean).map(String))];
+            let driverDetailsMap = {};
+            if (driverIdsInActiveBookings.length > 0) {
+              const drivers = await Driver.find({ _id: { $in: driverIdsInActiveBookings } })
+                .select({ _id: 1, name: 1, phone: 1, email: 1, vehicleType: 1, rating: 1, carPlate: 1, carColor: 1 }) // Select new fields
+                .lean();
+              driverDetailsMap = Object.fromEntries(drivers.map(d => [String(d._id), d]));
+            }
+
+            const enrichedActiveBookings = activeCurrentBookings.map(b => {
+              const driverInfo = driverDetailsMap[String(b.driverId)];
+              return {
+                ...b,
+                driver: driverInfo ? {
+                  id: String(driverInfo._id),
+                  name: driverInfo.name,
+                  phone: driverInfo.phone,
+                  email: driverInfo.email,
+                  vehicleType: driverInfo.vehicleType,
+                  rating: driverInfo.rating,
+                  carPlate: driverInfo.carPlate, 
+                  carColor: driverInfo.carColor,
+                } : b.driver, 
+              };
+            });
+            // --- END OF MODIFICATION ---
+
             socket.emit('booking:active_snapshot', {
-              bookings: activeCurrentBookings,
+              bookings: enrichedActiveBookings, // Use the enriched bookings
               user: { id: driverId, type: 'driver' },
               requestedAt: new Date().toISOString()
             });
@@ -383,6 +418,7 @@ try {
                 pickup: x.booking.pickup,
                 dropoff: x.booking.dropoff,
                 fareEstimated: x.booking.fareEstimated,
+                currentFare: x.booking.currentFare,
                 fareFinal: x.booking.fareFinal,
                 distanceKm: Math.round(x.distanceKm * 100) / 100,
                 passenger: x.booking.passengerId ? { id: String(x.booking.passengerId), name: x.booking.passengerName, phone: x.booking.passengerPhone } : undefined,
@@ -617,8 +653,7 @@ try {
       emitSocketError(socket, 'booking_error', 'INTERNAL_ERROR', 'Failed to process location update', { source: 'booking:driver_location_update', details: err && err.message });
     }
   });
-
-  // Handle pricing update requests from driver
+   // Handle pricing update requests from driver
   socket.on('pricing:update', async (payload) => {
     const startTime = Date.now();
     let requestBookingId = null;

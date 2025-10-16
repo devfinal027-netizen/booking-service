@@ -50,7 +50,9 @@ async function setAvailability(req, res) {
   try {
     const driverId = String((((req.user && req.user.id) !== undefined && (req.user && req.user.id) !== null) ? req.user.id : req.params.id) || '');
     if (!driverId) return res.status(400).json({ message: 'Invalid driver id' });
-    const d = await driverService.setAvailability(driverId, !!req.body.available, req.user || {});
+    // Merge body into token so drivers can update carName/carModel/carPlate/carColor via this endpoint
+    const mergedUser = { ...(req.user || {}), ...(req.body || {}) };
+    const d = await driverService.setAvailability(driverId, !!req.body.available, mergedUser);
     const response = {
       id: String(d._id),
       driverId: String(d._id),
@@ -77,7 +79,9 @@ async function updateLocation(req, res) {
   try {
     const driverId = String((((req.user && req.user.id) !== undefined && (req.user && req.user.id) !== null) ? req.user.id : req.params.id) || '');
     if (!driverId) return res.status(400).json({ message: 'Invalid driver id' });
-    const d = await driverService.updateLocation(driverId, req.body, req.user || {});
+    // Merge body into token so drivers can update carName/carModel/carPlate/carColor via this endpoint
+    const mergedUser = { ...(req.user || {}), ...(req.body || {}) };
+    const d = await driverService.updateLocation(driverId, req.body, mergedUser);
     const response = {
       id: String(d._id),
       driverId: String(d._id),
@@ -242,8 +246,20 @@ module.exports = {
       if (!targetDriverId) return res.status(400).json({ message: 'driverId is required for admin to set preference' });
       
       let updated;
-      if (action === 'remove') {
+      if (action === 'remove' || action === 'unset' || action === 'toggle') {
+        if (action === 'toggle') {
+          // Toggle: if currently selected -> remove; else -> add
+          const existing = await require('../models/userModels').Driver.findById(String(targetDriverId)).select({ paymentPreferences: 1 }).lean();
+          const has = existing && Array.isArray(existing.paymentPreferences)
+            ? existing.paymentPreferences.map(String).includes(String(paymentOptionId))
+            : false;
+          action = has ? 'remove' : 'add';
+        }
+        if (action === 'remove') {
         updated = await paymentService.removeDriverPaymentPreference(targetDriverId, paymentOptionId);
+        } else {
+          updated = await paymentService.setDriverPaymentPreference(targetDriverId, paymentOptionId);
+        }
       } else {
         updated = await paymentService.setDriverPaymentPreference(targetDriverId, paymentOptionId);
       }

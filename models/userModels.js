@@ -31,7 +31,7 @@ const DriverSchema = new mongoose.Schema({
   phone: { type: String },
   email: { type: String },
   password: { type: String },
-  vehicleType: { type: String, enum: ['mini', 'sedan', 'suv', 'mpv'] },
+  vehicleType: { type: String, enum: ['mini', 'sedan', 'van', 'suv', 'mpv', 'motorbike', 'bajaj'] },
   available: { type: Boolean, default: false },
   lastKnownLocation: { 
     latitude: Number, 
@@ -39,6 +39,7 @@ const DriverSchema = new mongoose.Schema({
     bearing: { type: Number, min: 0, max: 360 } // Bearing in degrees (0-360)
   },
   // Vehicle information
+  carName: { type: String },
   carPlate: { type: String },
   carModel: { type: String },
   carColor: { type: String },
