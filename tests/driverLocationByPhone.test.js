@@ -16,6 +16,7 @@ describe('driver.controller.getLocationByPhone', () => {
   let dispatchRegistryStub;
   let controller;
   let crudControllerStub;
+  let bookingModelsStub;
 
   beforeEach(() => {
     DriverStub = {
@@ -30,10 +31,17 @@ describe('driver.controller.getLocationByPhone', () => {
       crudController: sinon.stub().returns({})
     };
 
+    bookingModelsStub = {
+      Live: {
+        findOne: sinon.stub()
+      }
+    };
+
     controller = proxyquire('../controllers/driver.controller', {
       '../models/userModels': { Driver: DriverStub },
       '../sockets/dispatchRegistry': dispatchRegistryStub,
-      './basic.crud': crudControllerStub
+      './basic.crud': crudControllerStub,
+      '../models/bookingModels': bookingModelsStub
     });
   });
 
@@ -42,6 +50,14 @@ describe('driver.controller.getLocationByPhone', () => {
   function chainFindOneReturn(row) {
     return {
       select: () => ({
+        lean: () => Promise.resolve(row)
+      })
+    };
+  }
+
+  function chainLiveFindOneReturn(row) {
+    return {
+      sort: () => ({
         lean: () => Promise.resolve(row)
       })
     };
@@ -91,6 +107,7 @@ describe('driver.controller.getLocationByPhone', () => {
     };
     DriverStub.findOne.withArgs({ phone }).returns(chainFindOneReturn(row));
     dispatchRegistryStub.getLiveLocation.withArgs('driver-2').returns(null);
+    bookingModelsStub.Live.findOne.returns(chainLiveFindOneReturn(null));
 
     const req = { params: { phone } };
     const res = makeRes();

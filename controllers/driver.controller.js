@@ -183,6 +183,25 @@ async function getLocationByPhone(req, res) {
       }
     } catch (_) {}
 
+    // Fallback to latest Live snapshot in DB if in-memory socket cache is missing
+    if (!location) {
+      try {
+        const { Live } = require('../models/bookingModels');
+        const snap = await Live.findOne({ driverId: String(row._id), locationType: 'current' })
+          .sort({ timestamp: -1, updatedAt: -1, createdAt: -1 })
+          .lean();
+        if (snap && snap.latitude != null && snap.longitude != null) {
+          location = {
+            latitude: Number(snap.latitude),
+            longitude: Number(snap.longitude),
+            ...(snap.bearing != null ? { bearing: Number(snap.bearing) } : {})
+          };
+          source = 'live';
+          updatedAtIso = (snap.timestamp || snap.updatedAt || snap.createdAt || new Date()).toISOString();
+        }
+      } catch (_) {}
+    }
+
     if (!location && row.lastKnownLocation && row.lastKnownLocation.latitude != null && row.lastKnownLocation.longitude != null) {
       location = {
         latitude: Number(row.lastKnownLocation.latitude),
