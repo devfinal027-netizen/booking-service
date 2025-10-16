@@ -39,6 +39,7 @@ const DriverSchema = new mongoose.Schema({
     bearing: { type: Number, min: 0, max: 360 } // Bearing in degrees (0-360)
   },
   // Vehicle information
+  carName: { type: String },
   carPlate: { type: String },
   carModel: { type: String },
   carColor: { type: String },

@@ -240,13 +240,25 @@ exports.getWeeklyReport = async (req, res) => {
       const ids = topDriversAgg.map(d => String(d._id)).filter(Boolean);
       const { Types } = require('mongoose');
       const valid = ids.filter(id => Types.ObjectId.isValid(id));
-      const local = valid.length ? await Driver.find({ _id: { $in: valid } }).select({ _id: 1, name: 1, phone: 1, email: 1 }).lean() : [];
-      const lmap = Object.fromEntries(local.map(d => [String(d._id), { name: d.name, phone: d.phone, email: d.email }]));
+      const local = valid.length ? await Driver.find({ _id: { $in: valid } }).select({ _id: 1, name: 1, phone: 1, email: 1, carName: 1, carModel: 1, carPlate: 1, carColor: 1 }).lean() : [];
+      const lmap = Object.fromEntries(local.map(d => [String(d._id), { 
+        name: d.name, 
+        phone: d.phone, 
+        email: d.email,
+        carName: d.carName,
+        carModel: d.carModel,
+        carPlate: d.carPlate,
+        carColor: d.carColor
+      }]));
       topDrivers = topDriversAgg.map(d => ({
         driverId: String(d._id),
         driverName: lmap[String(d._id)]?.name,
         driverPhone: lmap[String(d._id)]?.phone,
         driverEmail: lmap[String(d._id)]?.email,
+        carName: lmap[String(d._id)]?.carName,
+        carModel: lmap[String(d._id)]?.carModel,
+        carPlate: lmap[String(d._id)]?.carPlate,
+        carColor: lmap[String(d._id)]?.carColor,
         rides: d.rides,
         gross: d.gross,
         commission: d.commission,
@@ -422,10 +434,25 @@ exports.getCombinedReports = async (req, res) => {
       const ids = driverBreakdownAgg.map(d => String(d._id)).filter(Boolean);
       const { Types } = require('mongoose');
       const valid = ids.filter(id => Types.ObjectId.isValid(id));
-      const local = valid.length ? await Driver.find({ _id: { $in: valid } }).select({ _id: 1, name: 1, phone: 1 }).lean() : [];
-      const lmap = Object.fromEntries(local.map(d => [String(d._id), { name: d.name, phone: d.phone }]));
+      const local = valid.length ? await Driver.find({ _id: { $in: valid } }).select({ _id: 1, name: 1, phone: 1, email: 1, carName: 1, carModel: 1, carPlate: 1, carColor: 1 }).lean() : [];
+      const lmap = Object.fromEntries(local.map(d => [String(d._id), { 
+        name: d.name, 
+        phone: d.phone, 
+        email: d.email,
+        carName: d.carName,
+        carModel: d.carModel,
+        carPlate: d.carPlate,
+        carColor: d.carColor
+      }]));
       driverBreakdown = driverBreakdownAgg.map(d => ({
         driverId: String(d._id),
+        driverName: lmap[String(d._id)]?.name,
+        driverPhone: lmap[String(d._id)]?.phone,
+        driverEmail: lmap[String(d._id)]?.email,
+        carName: lmap[String(d._id)]?.carName,
+        carModel: lmap[String(d._id)]?.carModel,
+        carPlate: lmap[String(d._id)]?.carPlate,
+        carColor: lmap[String(d._id)]?.carColor,
         name: lmap[String(d._id)]?.name,
         phone: lmap[String(d._id)]?.phone,
         grossFare: d.grossFare,
@@ -818,8 +845,16 @@ exports.getFinanceOverview = async (req, res) => {
       const { Types } = require('mongoose');
       const ids = topDriversRaw.map(d => String(d._id));
       const valid = ids.filter(id => Types.ObjectId.isValid(id));
-      const local = valid.length ? await Driver.find({ _id: { $in: valid } }).select({ _id: 1, name: 1, phone: 1, email: 1 }).lean() : [];
-      const lmap = Object.fromEntries(local.map(d => [String(d._id), { name: d.name, phone: d.phone, email: d.email }]));
+      const local = valid.length ? await Driver.find({ _id: { $in: valid } }).select({ _id: 1, name: 1, phone: 1, email: 1, carName: 1, carModel: 1, carPlate: 1, carColor: 1 }).lean() : [];
+      const lmap = Object.fromEntries(local.map(d => [String(d._id), { 
+        name: d.name, 
+        phone: d.phone, 
+        email: d.email,
+        carName: d.carName,
+        carModel: d.carModel,
+        carPlate: d.carPlate,
+        carColor: d.carColor
+      }]));
       const unresolved = ids.filter(id => !lmap[id]);
       let emap = {};
       if (unresolved.length) {
@@ -827,11 +862,26 @@ exports.getFinanceOverview = async (req, res) => {
           const { getDriversByIds } = require('../integrations/userServiceClient');
           const headers = req.headers && req.headers.authorization ? { Authorization: req.headers.authorization } : undefined;
           const infos = await getDriversByIds(unresolved, { headers });
-          emap = Object.fromEntries((infos || []).map(i => [String(i.id), { name: i.name, phone: i.phone, email: i.email }]));
+          emap = Object.fromEntries((infos || []).map(i => [String(i.id), { 
+            name: i.name, 
+            phone: i.phone, 
+            email: i.email,
+            carName: i.carName,
+            carModel: i.carModel,
+            carPlate: i.carPlate,
+            carColor: i.carColor
+          }]));
         } catch (_) {}
       }
       topDrivers = topDriversRaw.map(d => ({
         ...d,
+        driverName: (lmap[String(d._id)] || emap[String(d._id)] || {}).name,
+        driverPhone: (lmap[String(d._id)] || emap[String(d._id)] || {}).phone,
+        driverEmail: (lmap[String(d._id)] || emap[String(d._id)] || {}).email,
+        carName: (lmap[String(d._id)] || emap[String(d._id)] || {}).carName,
+        carModel: (lmap[String(d._id)] || emap[String(d._id)] || {}).carModel,
+        carPlate: (lmap[String(d._id)] || emap[String(d._id)] || {}).carPlate,
+        carColor: (lmap[String(d._id)] || emap[String(d._id)] || {}).carColor,
         name: (lmap[String(d._id)] || emap[String(d._id)] || {}).name,
         phone: (lmap[String(d._id)] || emap[String(d._id)] || {}).phone,
         email: (lmap[String(d._id)] || emap[String(d._id)] || {}).email

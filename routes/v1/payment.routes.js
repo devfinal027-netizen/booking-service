@@ -4,10 +4,17 @@ const { authenticate, authorize } = require('../../middleware/auth');
 const ctrl = require('../../controllers/paymentController');
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
+
+// Ensure upload directory exists
+const uploadDir = path.join(process.cwd(), 'uploads', 'payment-options');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
 
 const storage = multer.diskStorage({
   destination: function (_req, _file, cb) {
-    cb(null, path.join(process.cwd(), 'uploads', 'payment-options'));
+    cb(null, uploadDir);
   },
   filename: function (_req, file, cb) {
     const ts = Date.now();

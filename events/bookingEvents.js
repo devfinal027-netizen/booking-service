@@ -51,8 +51,9 @@ function buildLifecyclePayload(booking, { previousStatus, reason, driver, passen
     canceledAt: booking.status === 'canceled' ? (booking.updatedAt || new Date()) : undefined,
     canceledBy: booking.canceledBy || extras?.canceledBy,
     canceledReason: extras?.canceledReason || booking.canceledReason,
-    fareEstimated: booking.fareEstimated != null ? Number(Number(booking.fareEstimated).toFixed(2)) : undefined,
-    fareFinal: booking.fareFinal != null ? Number(Number(booking.fareFinal).toFixed(2)) : undefined,
+    fareEstimated: booking.fareEstimated != null ? Number(booking.fareEstimated) : undefined,
+    currentFare: booking.currentFare != null ? Number(booking.currentFare) : undefined,
+    fareFinal: booking.fareFinal != null ? Number(booking.fareFinal) : undefined,
     distanceKm: booking.distanceKm != null ? Number(booking.distanceKm) : undefined,
     reason,
   };

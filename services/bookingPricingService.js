@@ -4,7 +4,6 @@ const { emitBookingTargets } = require('../sockets/utils');
 const logger = require('../utils/logger');
 const metrics = require('../utils/metrics');
 const geolib = require('geolib');
-const mongoose = require('mongoose');
 
 // Legacy function - maintained for backward compatibility
 async function recalcForBooking(bookingId) {
@@ -121,81 +120,62 @@ async function calculateLivePricing(bookingId, currentLocation) {
       surgeMultiplier: pricing.surgeMultiplier
     });
 
-    // Calculate distance traveled using TripHistory cumulative path when available; fallback to pickup→current
+    // Calculate cumulative path distance from TripHistory (with GPS filtering)
+    logger.info('[PricingService] Calculating distance:', {
+      bookingId,
+      pickup: booking.pickup,
+      currentLocation
+    });
+
+    // Get cumulative path distance from TripHistory with GPS filtering
+    const { TripHistory } = require('../models/bookingModels');
+    const trip = await TripHistory.findOne({ bookingId: booking._id });
+    const locations = trip?.locations || [];
+    
     let distanceTraveled = 0;
     let movingMinutes = 0;
     let waitingMinutes = 0;
+    if (locations.length >= 2) {
+      for (let i = 1; i < locations.length; i++) {
+        const a = locations[i - 1];
+        const b = locations[i];
+        const segmentDistanceKm = geolib.getDistance(
+          { latitude: a.lat, longitude: a.lng },
+          { latitude: b.lat, longitude: b.lng }
+        ) / 1000;
+        const t1 = a.timestamp ? new Date(a.timestamp).getTime() : undefined;
+        const t2 = b.timestamp ? new Date(b.timestamp).getTime() : undefined;
+        const dtSec = (Number.isFinite(t1) && Number.isFinite(t2)) ? Math.max(0, (t2 - t1) / 1000) : undefined;
 
-    const now = new Date();
-    const canUseTripHistory = (() => {
-      try { return mongoose.connection && mongoose.connection.readyState === 1; } catch (_) { return false; }
-    })();
+        const minDistanceKm = 0.025; // 25m
+        const minDtSec = 5; // 5s
+        const minSpeedMps = 1; // 1 m/s
+        const speedMps = (dtSec && dtSec > 0) ? (segmentDistanceKm * 1000) / dtSec : 0;
 
-    if (canUseTripHistory) {
-      let TripHistoryModel = null;
-      try { TripHistoryModel = require('../models/bookingModels').TripHistory; } catch (_) {}
-      if (!TripHistoryModel) {
-        try { TripHistoryModel = require('../models/tripHistoryModel'); } catch (_) {}
-      }
-      try {
-        if (TripHistoryModel && typeof TripHistoryModel.findOne === 'function') {
-          const trip = await TripHistoryModel.findOne({ bookingId: booking._id }).select({ locations: 1 }).lean();
-          const points = Array.isArray(trip?.locations) ? trip.locations : [];
-
-          // Sum path distance from recorded points
-          for (let i = 1; i < points.length; i++) {
-            const a = points[i - 1];
-            const b = points[i];
-            const meters = geolib.getDistance(
-              { latitude: Number(a.lat), longitude: Number(a.lng) },
-              { latitude: Number(b.lat), longitude: Number(b.lng) }
-            );
-            if (Number.isFinite(meters) && meters >= 10) {
-              distanceTraveled += meters / 1000;
-            }
-            // Classify time by 10m threshold where timestamps are present
-            const at = a.timestamp ? new Date(a.timestamp).getTime() : null;
-            const bt = b.timestamp ? new Date(b.timestamp).getTime() : null;
-            if (Number.isFinite(at) && Number.isFinite(bt) && bt > at) {
-              const minutes = (bt - at) / 60000;
-              if (meters >= 10) movingMinutes += minutes; else waitingMinutes += minutes;
-            }
-          }
-
-          // Include the final segment up to currentLocation for time classification only
-          const last = points.length ? points[points.length - 1] : null;
-          if (last && last.timestamp) {
-            const lastTs = new Date(last.timestamp).getTime();
-            if (Number.isFinite(lastTs) && now.getTime() > lastTs) {
-              const metersToNow = geolib.getDistance(
-                { latitude: Number(last.lat), longitude: Number(last.lng) },
-                { latitude: Number(currentLocation.latitude), longitude: Number(currentLocation.longitude) }
-              );
-              const minutes = (now.getTime() - lastTs) / 60000;
-              if (Number.isFinite(metersToNow)) {
-                if (metersToNow >= 10) movingMinutes += minutes; else waitingMinutes += minutes;
-              } else {
-                waitingMinutes += minutes;
-              }
-            }
-          }
+        if (dtSec != null && dtSec >= minDtSec && segmentDistanceKm >= minDistanceKm && speedMps >= minSpeedMps) {
+          distanceTraveled += segmentDistanceKm;
+          movingMinutes += dtSec / 60;
+        } else if (dtSec != null && dtSec > 0) {
+          waitingMinutes += dtSec / 60;
         }
-      } catch (err) {
-        try { logger.warn('[PricingService] TripHistory unavailable, falling back to pickup→current', { bookingId, error: err && err.message }); } catch (_) {}
       }
-    }
-
-    if (!Number.isFinite(distanceTraveled) || distanceTraveled <= 0) {
-      // Fallback: straight-line pickup → current
-      distanceTraveled = geolib.getDistance(
-        { latitude: booking.pickup.latitude, longitude: booking.pickup.longitude },
-        { latitude: currentLocation.latitude, longitude: currentLocation.longitude }
-      ) / 1000;
+    } else {
+      // If not enough points, consider all elapsed time as waiting for now (no distance)
+      const referenceStart = booking.startedAt || booking.acceptedAt || booking.createdAt;
+      if (referenceStart) {
+        try {
+          const startTs = new Date(referenceStart).getTime();
+          if (Number.isFinite(startTs)) {
+            waitingMinutes = Math.max(0, (Date.now() - startTs) / 60000);
+          }
+        } catch (_) {}
+      }
     }
 
     logger.info('[PricingService] Distance calculated:', {
       bookingId,
-      distanceTraveled: Math.round(distanceTraveled * 100) / 100
+      distanceTraveled: Math.round(distanceTraveled * 100) / 100,
+      locationCount: locations.length
     });
 
     const referenceStart = booking.startedAt || booking.acceptedAt || booking.createdAt;
@@ -217,13 +197,9 @@ async function calculateLivePricing(bookingId, currentLocation) {
     const minimumFare = Number(pricing.minimumFare || 0);
     const maximumFare = Number(pricing.maximumFare || 0);
 
-    // Derive moving/ waiting minutes from trip points when available; otherwise fallback to elapsed
-    if (!(movingMinutes > 0 || waitingMinutes > 0)) {
-      movingMinutes = elapsedMinutes;
-      waitingMinutes = elapsedMinutes;
-    }
-
     const distanceCostRaw = distanceTraveled * perKm;
+    
+    // Standard ride-hailing pricing: separate moving time from waiting time
     const timeCostRaw = movingMinutes * perMinute;
     const waitingCostRaw = waitingMinutes * waitingPerMinute;
 
@@ -243,6 +219,8 @@ async function calculateLivePricing(bookingId, currentLocation) {
       distanceCost: Number(distanceCostRaw.toFixed(2)),
       timeCost: Number(timeCostRaw.toFixed(2)),
       waitingCost: Number(waitingCostRaw.toFixed(2)),
+      movingMinutes: Number(movingMinutes.toFixed(2)),
+      waitingMinutes: Number(waitingMinutes.toFixed(2)),
       surgeMultiplier,
     };
 
@@ -271,8 +249,6 @@ async function calculateLivePricing(bookingId, currentLocation) {
         ...fareBreakdown
       },
       elapsedMinutes: Number(elapsedMinutes.toFixed(2)),
-      movingMinutes: Number(movingMinutes.toFixed(2)),
-      waitingMinutes: Number(waitingMinutes.toFixed(2)),
       updatedAt: new Date()
     };
 
@@ -303,7 +279,7 @@ async function calculateLivePricing(bookingId, currentLocation) {
     );
 
   try {
-    booking.fareEstimated = result.currentFare;
+    booking.currentFare = result.currentFare;
     booking.distanceKm = result.distanceTraveled;
     await booking.save();
   } catch (_) {}
