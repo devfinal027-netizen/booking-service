@@ -29,6 +29,24 @@ async function buildUserMaps(driverIdsRaw, passengerIdsRaw) {
   return { driverMap, passengerMap };
 }
 
-module.exports = { buildUserMaps };
+// Rewards helper shared by rewards controllers
+async function computeRewardsForUser(userType, userId) {
+  const { Booking } = require('../../models/bookingModels');
+  const match = { status: 'completed' };
+  if (userType === 'driver') match.driverId = String(userId);
+  if (userType === 'passenger') match.passengerId = String(userId);
+
+  const agg = await Booking.aggregate([
+    { $match: match },
+    { $group: { _id: null, totalKm: { $sum: '$distanceKm' }, rides: { $sum: 1 } } }
+  ]);
+
+  const totalDistanceKm = agg[0]?.totalKm || 0;
+  const completedRides = agg[0]?.rides || 0;
+  const rewardPoints = Math.floor(totalDistanceKm / 2) * 10; // 10 ETB per 2km
+  return { totalDistanceKm, completedRides, rewardPoints };
+}
+
+module.exports = { buildUserMaps, computeRewardsForUser };
 
 
