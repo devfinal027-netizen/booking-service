@@ -332,6 +332,7 @@ module.exports = (io, socket) => {
               const passengerRoom = `passenger:${String(updated.passengerId)}`;
               try { ioRef.to(passengerRoom).emit('eta:update', payload); } catch (_) {}
               try { ioRef.to(passengerRoom).emit('booking:ETA_update', payload); } catch (_) {}
+              try { logger.info('[eta] pre-pickup emitted', { bookingId: String(updated._id), passengerRoom }); } catch (_) {}
             }
           }
         }
@@ -474,6 +475,7 @@ module.exports = (io, socket) => {
           const payload = { bookingId: String(updated._id), eta: { seconds: 0, text: 'arrived' }, etaSeconds: 0, etaText: 'arrived', ended: true, phase: 'to_pickup' };
           try { ioRef.to(passengerRoom).emit('eta:update', payload); } catch (_) {}
           try { ioRef.to(passengerRoom).emit('booking:ETA_update', payload); } catch (_) {}
+          try { logger.info('[eta] pre-pickup ended', { bookingId: String(updated._id), passengerRoom }); } catch (_) {}
         }
       } catch (_) {}
       try { logger.info('[socket->room] trip:started', { bookingId: String(updated._id) }); } catch (_) {}
