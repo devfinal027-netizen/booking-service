@@ -349,18 +349,31 @@ async function fetchEtaUsingGoogle({ origin, destination, apiKey }) {
 async function calculateAndBroadcastEta({ booking, driverLocation, io }) {
   try {
     if (!booking || !driverLocation) return;
-    if (String(booking.status || '').toLowerCase() !== 'ongoing') return; // start ETA only when trip is ongoing
+    try { logger.info('[eta] trigger', { bookingId: String(booking._id), status: booking.status, driverLocation }); } catch (_) {}
+    if (String(booking.status || '').toLowerCase() !== 'ongoing') {
+      try { logger.info('[eta] skipped: not ongoing', { bookingId: String(booking._id), status: booking.status }); } catch (_) {}
+      return; // start ETA only when trip is ongoing
+    }
     const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || process.env.GMAPS_API_KEY;
-    if (!GOOGLE_MAPS_API_KEY) return;
+    if (!GOOGLE_MAPS_API_KEY) {
+      try { logger.warn('[eta] skipped: GOOGLE_MAPS_API_KEY missing'); } catch (_) {}
+      return;
+    }
 
     const dest = (booking.startedAt ? booking.dropoff : booking.pickup) || booking.dropoff || booking.pickup;
-    if (!dest || dest.latitude == null || dest.longitude == null) return;
+    if (!dest || dest.latitude == null || dest.longitude == null) {
+      try { logger.warn('[eta] skipped: destination missing', { bookingId: String(booking._id) }); } catch (_) {}
+      return;
+    }
 
     const origin = { latitude: Number(driverLocation.latitude), longitude: Number(driverLocation.longitude) };
     const destination = { latitude: Number(dest.latitude), longitude: Number(dest.longitude) };
 
     const { etaSeconds, etaText } = await fetchEtaUsingGoogle({ origin, destination, apiKey: GOOGLE_MAPS_API_KEY });
-    if (!etaSeconds) return;
+    if (!etaSeconds) {
+      try { logger.info('[eta] skipped: API returned no eta', { bookingId: String(booking._id) }); } catch (_) {}
+      return;
+    }
 
     const payload = {
       bookingId: String(booking._id),
@@ -376,10 +389,11 @@ async function calculateAndBroadcastEta({ booking, driverLocation, io }) {
       try { io.to(roomBooking).emit('eta:update', payload); } catch (_) {}
       if (roomDriver) { try { io.to(roomDriver).emit('eta:update', payload); } catch (_) {} }
       if (roomPassenger) { try { io.to(roomPassenger).emit('eta:update', payload); } catch (_) {} }
+      try { logger.info('[eta] emitted', { bookingId: String(booking._id), rooms: { booking: roomBooking, driver: roomDriver, passenger: roomPassenger } }); } catch (_) {}
     }
     try { metrics.increment('eta.update_sent', 1, { vehicleType: booking.vehicleType || 'unknown' }); } catch (_) {}
   } catch (e) {
-    try { logger.warn('[eta] calculate/broadcast failed', { error: e && e.message }); } catch (_) {}
+    try { logger.error('[eta] calculate/broadcast failed', { error: e && e.message, stack: e && e.stack }); } catch (_) {}
     try { metrics.increment('eta.update_error', 1, { reason: e && e.code ? e.code : (e && e.message) || 'unknown' }); } catch (_) {}
   }
 }
@@ -399,6 +413,7 @@ function broadcastEtaEnded({ booking, io }) {
     try { io.to(roomBooking).emit('eta:update', payload); } catch (_) {}
     if (roomDriver) { try { io.to(roomDriver).emit('eta:update', payload); } catch (_) {} }
     if (roomPassenger) { try { io.to(roomPassenger).emit('eta:update', payload); } catch (_) {} }
+    try { logger.info('[eta] ended broadcast', { bookingId: String(booking._id), rooms: { booking: roomBooking, driver: roomDriver, passenger: roomPassenger } }); } catch (_) {}
   } catch (_) {}
 }
 
