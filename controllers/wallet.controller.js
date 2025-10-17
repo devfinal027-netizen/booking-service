@@ -8,11 +8,12 @@ exports.topup = async (req, res) => {
     if (!amount || amount <= 0)
       return res.status(400).json({ message: "amount must be > 0" });
 
-    // Phone must come from token
-    const tokenPhone =
-      req.user && (req.user.phone || req.user.phoneNumber || req.user.mobile);
-    if (!tokenPhone)
-      return res.status(400).json({ message: "phoneNumber missing in token" });
+    // Phone can come from body or token
+    const bodyPhone = req.body && (req.body.msisdn || req.body.phone || req.body.phoneNumber);
+    const tokenPhone = req.user && (req.user.phone || req.user.phoneNumber || req.user.mobile);
+    const rawPhone = bodyPhone || tokenPhone;
+    if (!rawPhone)
+      return res.status(400).json({ message: "phoneNumber missing (token/body)" });
 
     // Normalize Ethiopian MSISDN
     const normalizeMsisdnEt = (raw) => {
@@ -30,7 +31,7 @@ exports.topup = async (req, res) => {
       return s;
     };
 
-    const msisdn = normalizeMsisdnEt(tokenPhone);
+    const msisdn = normalizeMsisdnEt(rawPhone);
     if (!msisdn)
       return res.status(400).json({
         message: "Invalid phone format in token. Required: +2519XXXXXXXX",
@@ -200,6 +201,18 @@ exports.topup = async (req, res) => {
       metadata: { ...tx.metadata, gatewayResponse: gw },
     });
 
+    // Emit initial pending update over socket for realtime clients
+    try {
+      const { getIo, DEFAULT_OPS_ROOM } = require('../sockets/utils');
+      const io = getIo && getIo();
+      if (io) {
+        const room = role === 'driver' ? `driver:${userId}` : (role === 'passenger' ? `passenger:${userId}` : null);
+        const payload = { transactionId: txId.toString(), status: 'pending', amount, type: 'credit', method: 'santimpay', userId, role, msisdn, updatedAt: new Date(), reason };
+        if (room) { try { io.to(room).emit('wallet:transaction_update', payload); } catch (_) {} }
+        try { io.to(DEFAULT_OPS_ROOM).emit('wallet:transaction_update', payload); } catch (_) {}
+      }
+    } catch (_) {}
+
     return res.status(202).json({
       message: "Topup initiated",
       transactionId: txId.toString(),
@@ -365,6 +378,30 @@ exports.webhook = async (req, res) => {
         });
       }
     }
+
+    // Emit realtime transaction update to user and ops
+    try {
+      const { getIo, DEFAULT_OPS_ROOM } = require('../sockets/utils');
+      const io = getIo && getIo();
+      if (io) {
+        const room = tx.role === 'driver' ? `driver:${tx.userId}` : (tx.role === 'passenger' ? `passenger:${tx.userId}` : null);
+        const emitPayload = {
+          transactionId: String(tx._id),
+          status: tx.status,
+          amount: tx.amount,
+          type: tx.type,
+          method: tx.method,
+          userId: tx.userId,
+          role: tx.role,
+          msisdn: tx.msisdn,
+          txnId: tx.txnId,
+          refId: tx.refId,
+          updatedAt: tx.updatedAt
+        };
+        if (room) { try { io.to(room).emit('wallet:transaction_update', emitPayload); } catch (_) {} }
+        try { io.to(DEFAULT_OPS_ROOM).emit('wallet:transaction_update', emitPayload); } catch (_) {}
+      }
+    } catch (_) {}
 
     // Respond with concise, important fields only
     return res.status(200).json({
