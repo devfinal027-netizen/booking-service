@@ -276,6 +276,66 @@ module.exports = (io, socket) => {
         notifyDispatchedRemoval(String(updated._id), String(socket.user.id), 'assigned');
         clearBookingDispatch(String(updated._id));
       } catch (_) {}
+
+      // Pre-pickup ETA for passenger only (driver -> pickup) during accepted phase
+      try {
+        const { getIo } = require('./utils');
+        const ioRef = getIo && getIo();
+        if (ioRef && updated && updated.pickup && updated.passengerId) {
+          const { getLiveLocation } = require('./dispatchRegistry');
+          let origin = undefined;
+          const live = getLiveLocation(String(socket.user.id));
+          if (live && live.latitude != null && live.longitude != null) {
+            origin = { latitude: Number(live.latitude), longitude: Number(live.longitude) };
+          } else {
+            try {
+              const { Driver } = require('../models/userModels');
+              const d = await Driver.findById(String(socket.user.id)).select({ lastKnownLocation: 1 }).lean();
+              if (d && d.lastKnownLocation && d.lastKnownLocation.latitude != null && d.lastKnownLocation.longitude != null) {
+                origin = { latitude: Number(d.lastKnownLocation.latitude), longitude: Number(d.lastKnownLocation.longitude) };
+              }
+            } catch (_) {}
+          }
+          if (origin) {
+            const destination = { latitude: Number(updated.pickup.latitude), longitude: Number(updated.pickup.longitude) };
+            const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || process.env.GMAPS_API_KEY;
+            let etaSeconds;
+            let etaText;
+            if (GOOGLE_MAPS_API_KEY) {
+              try {
+                const { fetchEtaUsingGoogle } = require('../services/bookingPricingService');
+                const r = await fetchEtaUsingGoogle({ origin, destination, apiKey: GOOGLE_MAPS_API_KEY });
+                etaSeconds = r.etaSeconds;
+                etaText = r.etaText || `${Math.round((etaSeconds || 0)/60)} min`;
+              } catch (_) {}
+            }
+            if (!etaSeconds) {
+              try {
+                const { getEta } = require('../utils/routing');
+                const fb = await getEta({ from: origin, to: destination, vehicle: updated.vehicleType || 'car' });
+                if (fb && Number.isFinite(fb.etaMinutes)) {
+                  etaSeconds = Math.max(1, Math.round(Number(fb.etaMinutes) * 60));
+                  etaText = `${Math.round((etaSeconds || 0)/60)} min`;
+                }
+              } catch (_) {}
+            }
+            if (etaSeconds) {
+              const payload = {
+                bookingId: String(updated._id),
+                eta: { seconds: etaSeconds, text: etaText },
+                etaSeconds,
+                etaText,
+                driverLocation: origin,
+                destination,
+                phase: 'to_pickup'
+              };
+              const passengerRoom = `passenger:${String(updated.passengerId)}`;
+              try { ioRef.to(passengerRoom).emit('eta:update', payload); } catch (_) {}
+              try { ioRef.to(passengerRoom).emit('booking:ETA_update', payload); } catch (_) {}
+            }
+          }
+        }
+      } catch (_) {}
     } catch (err) {
       const safe = (m) => (m && m.message) ? m.message : 'Failed to accept booking';
       const extras = bookingId ? { bookingId } : undefined;
@@ -405,6 +465,17 @@ module.exports = (io, socket) => {
       // Also emit an initial trip:ongoing update at the start location for clients expecting continuous stream from start
       try { if (startLocation) bookingEvents.emitTripOngoing(updated, startLocation); } catch (_) {}
       // no ETA yet until status becomes ongoing (handled by trip:ongoing)
+      // End pre-pickup ETA for passenger (arrived at pickup)
+      try {
+        const { getIo } = require('./utils');
+        const ioRef = getIo && getIo();
+        const passengerRoom = updated && updated.passengerId ? `passenger:${String(updated.passengerId)}` : null;
+        if (ioRef && passengerRoom) {
+          const payload = { bookingId: String(updated._id), eta: { seconds: 0, text: 'arrived' }, etaSeconds: 0, etaText: 'arrived', ended: true, phase: 'to_pickup' };
+          try { ioRef.to(passengerRoom).emit('eta:update', payload); } catch (_) {}
+          try { ioRef.to(passengerRoom).emit('booking:ETA_update', payload); } catch (_) {}
+        }
+      } catch (_) {}
       try { logger.info('[socket->room] trip:started', { bookingId: String(updated._id) }); } catch (_) {}
     } catch (err) {
       logger.error('[trip:started] error', err);
