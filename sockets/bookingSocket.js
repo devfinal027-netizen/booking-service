@@ -266,9 +266,9 @@ module.exports = (io, socket) => {
       // Canonical `booking:update` emission carries enriched payload from lifecycle service; no legacy duplicates are emitted here.
 
       try {
+        // Notify only other dispatched drivers; do not broadcast to all drivers to avoid notifying the accepter
         notifyDispatchedRemoval(String(updated._id), String(socket.user.id), 'assigned');
         clearBookingDispatch(String(updated._id));
-        try { io.to('drivers').emit('booking:removed', { bookingId: String(updated._id), reason: 'assigned' }); } catch (_) {}
       } catch (_) {}
     } catch (err) {
       const safe = (m) => (m && m.message) ? m.message : 'Failed to accept booking';
