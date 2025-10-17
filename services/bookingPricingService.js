@@ -349,6 +349,7 @@ async function fetchEtaUsingGoogle({ origin, destination, apiKey }) {
 async function calculateAndBroadcastEta({ booking, driverLocation, io }) {
   try {
     if (!booking || !driverLocation) return;
+    if (String(booking.status || '').toLowerCase() !== 'ongoing') return; // start ETA only when trip is ongoing
     const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || process.env.GMAPS_API_KEY;
     if (!GOOGLE_MAPS_API_KEY) return;
 
@@ -383,10 +384,29 @@ async function calculateAndBroadcastEta({ booking, driverLocation, io }) {
   }
 }
 
+function broadcastEtaEnded({ booking, io }) {
+  try {
+    if (!booking || !io) return;
+    const payload = {
+      bookingId: String(booking._id),
+      etaSeconds: 0,
+      etaText: 'arrived',
+      ended: true
+    };
+    const roomBooking = `booking:${String(booking._id)}`;
+    const roomDriver = booking.driverId ? `driver:${String(booking.driverId)}` : undefined;
+    const roomPassenger = booking.passengerId ? `passenger:${String(booking.passengerId)}` : undefined;
+    try { io.to(roomBooking).emit('eta:update', payload); } catch (_) {}
+    if (roomDriver) { try { io.to(roomDriver).emit('eta:update', payload); } catch (_) {} }
+    if (roomPassenger) { try { io.to(roomPassenger).emit('eta:update', payload); } catch (_) {} }
+  } catch (_) {}
+}
+
 module.exports = { 
   recalcForBooking,
   calculateLivePricing,
   fetchEtaUsingGoogle,
-  calculateAndBroadcastEta
+  calculateAndBroadcastEta,
+  broadcastEtaEnded
 };
 

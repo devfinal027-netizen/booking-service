@@ -391,6 +391,7 @@ module.exports = (io, socket) => {
       bookingEvents.emitTripStarted(updated);
       // Also emit an initial trip:ongoing update at the start location for clients expecting continuous stream from start
       try { if (startLocation) bookingEvents.emitTripOngoing(updated, startLocation); } catch (_) {}
+      // no ETA yet until status becomes ongoing (handled by trip:ongoing)
       try { logger.info('[socket->room] trip:started', { bookingId: String(updated._id) }); } catch (_) {}
     } catch (err) {
       logger.error('[trip:started] error', err);
@@ -443,6 +444,14 @@ module.exports = (io, socket) => {
           });
         } catch (_) {}
       }
+
+      // Trigger ETA only while trip is ongoing
+      try {
+        const { calculateAndBroadcastEta } = require('../services/bookingPricingService');
+        const { getIo } = require('./utils');
+        const ioRef = getIo && getIo();
+        await calculateAndBroadcastEta({ booking, driverLocation: { latitude: Number(location.latitude), longitude: Number(location.longitude) }, io: ioRef });
+      } catch (_) {}
     } catch (err) {
       logger.error('[trip:ongoing] error', err);
       emitSocketError(socket, 'booking_error', 'INTERNAL_ERROR', 'Failed to update trip location', { source: 'trip:ongoing', details: err && err.message });
@@ -475,6 +484,13 @@ module.exports = (io, socket) => {
       }
     const updated = await lifecycle.completeTrip(bookingId, endLocation, { surgeMultiplier, discount, debitPassengerWallet });
     bookingEvents.emitTripCompleted(updated);
+    // Stop ETA updates and signal ended
+    try {
+      const { broadcastEtaEnded } = require('../services/bookingPricingService');
+      const { getIo } = require('./utils');
+      const ioRef = getIo && getIo();
+      broadcastEtaEnded({ booking: updated, io: ioRef });
+    } catch (_) {}
     try { logger.info('[socket->room] trip:completed', { bookingId: String(updated._id) }); } catch (_) {}
     } catch (err) {
       logger.error('[trip:completed] error', err);
