@@ -280,16 +280,80 @@ exports.webhook = async (req, res) => {
       });
     }
 
-    const rawStatus = (data.Status || data.status || "")
-      .toString()
-      .toUpperCase();
-    const normalizedStatus = ["COMPLETED", "SUCCESS", "APPROVED"].includes(
-      rawStatus
-    )
-      ? "success"
-      : ["FAILED", "CANCELLED", "DECLINED"].includes(rawStatus)
-      ? "failed"
-      : "pending";
+    // Robust status normalization to handle various providers
+    const rawCandidates = [
+      data.Status,
+      data.status,
+      data.paymentStatus,
+      data.txnStatus,
+      data.state,
+      data.result,
+      data.response,
+      data.UpdateType,
+    ]
+      .filter((v) => v != null)
+      .map((v) => String(v).toUpperCase());
+
+    const codeCandidates = [
+      data.statusCode,
+      data.code,
+      data.resultCode,
+      data.responseCode,
+    ]
+      .filter((v) => v != null)
+      .map((v) => String(v).toUpperCase());
+
+    const successBool =
+      String(data.success).toLowerCase() === "true" || data.success === true;
+
+    const SUCCESS_SET = new Set([
+      "OK",
+      "COMPLETED",
+      "SUCCESS",
+      "APPROVED",
+      "PAID",
+      "SUCCESSFUL",
+    ]);
+    const FAILED_SET = new Set([
+      "FAILED",
+      "FAILURE",
+      "DECLINED",
+      "REJECTED",
+      "ERROR",
+      "EXPIRED",
+      "TIMEOUT",
+      "CANCELED",
+      "CANCELLED",
+      "REVERSED",
+      "CHARGEBACK",
+      "CHARGED_BACK",
+    ]);
+
+    let normalizedStatus = "pending";
+    const rawStatusUpper = rawCandidates[0] || "";
+    if (
+      successBool ||
+      rawCandidates.some((s) => SUCCESS_SET.has(s)) ||
+      codeCandidates.some((s) => SUCCESS_SET.has(s))
+    ) {
+      normalizedStatus = "success";
+    } else if (
+      rawCandidates.some((s) => FAILED_SET.has(s)) ||
+      codeCandidates.some((s) => FAILED_SET.has(s))
+    ) {
+      normalizedStatus = "failed";
+    } else {
+      const reasonMsg = String(
+        data.StatusReason || data.message || data.reason || ""
+      ).toLowerCase();
+      if (
+        /(fail|declin|reject|error|timeout|expired|cancel|reverse|chargeback)/.test(
+          reasonMsg
+        )
+      ) {
+        normalizedStatus = "failed";
+      }
+    }
 
     const previousStatus = tx.status;
     tx.txnId = gwTxnId || tx.txnId;
@@ -316,6 +380,9 @@ exports.webhook = async (req, res) => {
       vatAmountInPercent: data.vatAmountInPercent || data.VatAmountInPercent,
       lotteryTax: data.lotteryTax,
       reason: data.reason,
+      providerStatus: rawStatusUpper,
+      providerCodes: codeCandidates,
+      providerSuccessFlag: successBool,
     };
     tx.updatedAt = new Date();
 
