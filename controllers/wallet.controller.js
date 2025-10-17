@@ -234,12 +234,15 @@ exports.webhook = async (req, res) => {
       console.log("[wallet-webhook] received:", data);
     }
     // Prefer the id we originally sent (provider echoes it as thirdPartyId). Do not use provider RefId as our id.
-    const thirdPartyId =
+    let thirdPartyId =
       data.thirdPartyId ||
       data.ID ||
       data.id ||
       data.transactionId ||
       data.clientReference;
+    if (!thirdPartyId && body && body.id) {
+      thirdPartyId = body.id;
+    }
     const providerRefId = data.RefId || data.refId;
     const gwTxnId = data.TxnId || data.txnId;
     if (!thirdPartyId && !gwTxnId)
@@ -253,6 +256,10 @@ exports.webhook = async (req, res) => {
     // Otherwise try our refId match (we set refId to our ObjectId string when creating the tx)
     if (!tx && thirdPartyId) {
       tx = await Transaction.findOne({ refId: String(thirdPartyId) });
+      if (!tx) {
+        // Fallback: try providerRefId matching our txnId field
+        tx = await Transaction.findOne({ txnId: String(providerRefId || '') });
+      }
     }
     // Fallback to gateway txnId
     if (!tx && gwTxnId) {
@@ -473,7 +480,7 @@ exports.webhook = async (req, res) => {
       } catch (_) {}
     }
 
-    // Emit realtime transaction update to user and ops
+    // Emit realtime transaction update to user and ops (for any status change)
     try {
       const { getIo, DEFAULT_OPS_ROOM } = require('../sockets/utils');
       const io = getIo && getIo();
