@@ -20,25 +20,43 @@ function verifyExternalToken(token, options = {}) {
     err.code = 'TOKEN_REQUIRED';
     throw err;
   }
-  const secret = getFirstEnv('JWT_SECRET');
-  if (!secret) {
+  const rawSecret = getFirstEnv('JWT_SECRET');
+  if (!rawSecret) {
     const err = new Error('JWT secret not configured');
     err.code = 'JWT_SECRET_MISSING';
     throw err;
   }
   const issuer = getFirstEnv('JWT_ISSUER', 'TOKEN_ISSUER', 'AUTH_ISSUER');
-  const audience = getFirstEnv('JWT_AUDIENCE', 'TOKEN_AUDIENCE', 'AUTH_AUDIENCE');
-  const verifyOpts = { ...options };
+  const audience = getFirstEnv('JWT_AUDIENCE', 'TOKEN_AUDIENCE', 'AUTH_AUDIENCE') || 'booking-service';
+  const verifyOpts = { algorithms: ['HS256'], ...options };
   if (issuer) verifyOpts.issuer = issuer;
   if (audience) verifyOpts.audience = audience;
-  const verified = jwt.verify(raw, secret, verifyOpts);
-  const requiredKeys = ['iss','aud','ver','id','type','roles','driverId'];
-  for (const k of requiredKeys) {
-    if (!Object.prototype.hasOwnProperty.call(verified, k)) {
-      const err = new Error(`Token missing required claim: ${k}`);
-      err.code = 'TOKEN_INVALID_CLAIMS';
-      throw err;
+
+  // Support base64-encoded secrets (optional)
+  const isBase64Flag = process.env.JWT_SECRET_IS_BASE64 === '1' || process.env.ALLOW_BASE64_JWT_SECRET === '1';
+  let verified;
+  let firstError;
+  try {
+    verified = jwt.verify(raw, rawSecret, verifyOpts);
+  } catch (e1) {
+    firstError = e1;
+    if (isBase64Flag) {
+      try {
+        const base64Secret = Buffer.from(String(rawSecret), 'base64');
+        verified = jwt.verify(raw, base64Secret, verifyOpts);
+      } catch (e2) {
+        throw e2;
+      }
+    } else {
+      throw e1;
     }
+  }
+
+  // Require minimal claims only
+  if (!verified || verified.id == null || verified.type == null) {
+    const err = new Error('Token missing required claims: id/type');
+    err.code = 'TOKEN_INVALID_CLAIMS';
+    throw err;
   }
   return verified;
 }
