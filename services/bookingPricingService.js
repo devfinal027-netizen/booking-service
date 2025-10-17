@@ -80,6 +80,17 @@ async function recalcForBooking(bookingId) {
   };
 }
 
+function formatEtaText(etaSeconds) {
+  const sec = Number(etaSeconds || 0);
+  if (!Number.isFinite(sec) || sec <= 0) return '0 min';
+  const minutes = Math.round(sec / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rem = minutes % 60;
+  if (rem === 0) return `${hours} hr`;
+  return `${hours} hr ${rem} min`;
+}
+
 /**
  * Calculate live pricing based on driver's current location during ongoing trip
  * @param {string} bookingId - The booking ID
@@ -417,7 +428,7 @@ async function calculateAndBroadcastEta({ booking, driverLocation, io, vehicleTy
     try {
       const google = await fetchEtaUsingGoogle({ origin, destination, apiKey: GOOGLE_MAPS_API_KEY });
       etaSeconds = google.etaSeconds;
-      etaText = google.etaText;
+      etaText = google.etaText || formatEtaText(etaSeconds);
     } catch (apiErr) {
       try { logger.warn('[eta] Google API failed; falling back to heuristic ETA', { bookingId: String(booking._id), error: apiErr && apiErr.message }); } catch (_) {}
       // Attempt Routes API (new) before heuristic
@@ -425,7 +436,7 @@ async function calculateAndBroadcastEta({ booking, driverLocation, io, vehicleTy
         try {
           const routes = await fetchEtaUsingRoutesApi({ origin, destination, apiKey: GOOGLE_MAPS_API_KEY });
           etaSeconds = routes.etaSeconds;
-          etaText = routes.etaText;
+          etaText = routes.etaText || formatEtaText(etaSeconds);
         } catch (routesErr) {
           try { logger.warn('[eta] Routes API failed; using heuristic ETA', { bookingId: String(booking._id), error: routesErr && routesErr.message }); } catch (_) {}
         }
@@ -434,7 +445,7 @@ async function calculateAndBroadcastEta({ booking, driverLocation, io, vehicleTy
         const fallback = await getEta({ from: { latitude: origin.latitude, longitude: origin.longitude }, to: { latitude: destination.latitude, longitude: destination.longitude }, vehicle: booking.vehicleType || 'car' });
         if (fallback && Number.isFinite(fallback.etaMinutes)) {
           etaSeconds = Math.max(1, Math.round(Number(fallback.etaMinutes) * 60));
-          etaText = `${fallback.etaMinutes} min`;
+          etaText = formatEtaText(etaSeconds);
         }
       } catch (_) {
         // ignore
@@ -447,10 +458,12 @@ async function calculateAndBroadcastEta({ booking, driverLocation, io, vehicleTy
 
     const payload = {
       bookingId: String(booking._id),
-      etaSeconds,
-      etaText,
+      eta: { seconds: etaSeconds, text: etaText },
+      etaSeconds, // backward-compat
+      etaText,    // backward-compat
       driverLocation: origin,
-      destination
+      destination,
+      phase: 'to_dropoff'
     };
     const roomBooking = `booking:${String(booking._id)}`;
     const roomDriver = booking.driverId ? `driver:${String(booking.driverId)}` : undefined;
@@ -465,7 +478,7 @@ async function calculateAndBroadcastEta({ booking, driverLocation, io, vehicleTy
       if (roomPassenger) { try { io.to(roomPassenger).emit('booking:ETA_update', payload); } catch (_) {} }
       try { logger.info('[eta] emitted', { bookingId: String(booking._id), rooms: { booking: roomBooking, driver: roomDriver, passenger: roomPassenger } }); } catch (_) {}
     }
-    try { metrics.increment('eta.update_sent', 1, { vehicleType: (booking.vehicleType || vehicleTypeOverride || 'unknown') }); } catch (_) {}
+    try { metrics.increment('eta.update_sent', 1, { vehicleType: (booking.vehicleType || vehicleTypeOverride || 'unknown'), phase: 'to_dropoff' }); } catch (_) {}
   } catch (e) {
     try { logger.error('[eta] calculate/broadcast failed', { error: e && e.message, stack: e && e.stack }); } catch (_) {}
     try { metrics.increment('eta.update_error', 1, { reason: e && e.code ? e.code : (e && e.message) || 'unknown' }); } catch (_) {}
@@ -477,9 +490,11 @@ function broadcastEtaEnded({ booking, io }) {
     if (!booking || !io) return;
     const payload = {
       bookingId: String(booking._id),
+      eta: { seconds: 0, text: 'arrived' },
       etaSeconds: 0,
       etaText: 'arrived',
-      ended: true
+      ended: true,
+      phase: 'to_dropoff'
     };
     const roomBooking = `booking:${String(booking._id)}`;
     const roomDriver = booking.driverId ? `driver:${String(booking.driverId)}` : undefined;
