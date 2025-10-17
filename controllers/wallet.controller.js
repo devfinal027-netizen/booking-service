@@ -1,6 +1,7 @@
 const { Wallet, Transaction } = require("../models/common");
 const santim = require("../integrations/santimpay");
 const mongoose = require("mongoose");
+const logger = require('../utils/logger');
 
 exports.topup = async (req, res) => {
   try {
@@ -225,14 +226,10 @@ exports.topup = async (req, res) => {
 
 exports.webhook = async (req, res) => {
   try {
-    // Expect SantimPay to call with fields including txnId, Status, amount, reason, msisdn, refId, thirdPartyId
+    // 1) Log full incoming payload
     const body = req.body || {};
     const data = body.data || body;
-    // Debug log (can be toggled off via env)
-    if (process.env.WALLET_WEBHOOK_DEBUG === "1") {
-      // eslint-disable-next-line no-console
-      console.log("[wallet-webhook] received:", data);
-    }
+    try { logger.info('[wallet-webhook] received payload', { body }); } catch (_) {}
     // Prefer the id we originally sent (provider echoes it as thirdPartyId). Do not use provider RefId as our id.
     let thirdPartyId =
       data.thirdPartyId ||
@@ -245,25 +242,31 @@ exports.webhook = async (req, res) => {
     }
     const providerRefId = data.RefId || data.refId;
     const gwTxnId = data.TxnId || data.txnId;
+    try { logger.info('[wallet-webhook] identifiers parsed', { thirdPartyId, providerRefId, gwTxnId }); } catch (_) {}
     if (!thirdPartyId && !gwTxnId)
       return res.status(400).json({ message: "Invalid webhook payload" });
 
     let tx = null;
-    // If thirdPartyId looks like an ObjectId, try findById
+    // 3) Attempt to find the transaction with logging at each step
     if (thirdPartyId && mongoose.Types.ObjectId.isValid(String(thirdPartyId))) {
-      tx = await Transaction.findById(thirdPartyId);
+      try { logger.info('[wallet-webhook] findById attempt', { thirdPartyId }); } catch (_) {}
+      try { tx = await Transaction.findById(thirdPartyId); } catch (e) { try { logger.error('[wallet-webhook] findById error', { error: e && e.message, stack: e && e.stack }); } catch (_) {} }
+      try { logger.info('[wallet-webhook] findById result', { found: !!tx }); } catch (_) {}
     }
-    // Otherwise try our refId match (we set refId to our ObjectId string when creating the tx)
     if (!tx && thirdPartyId) {
-      tx = await Transaction.findOne({ refId: String(thirdPartyId) });
-      if (!tx) {
-        // Fallback: try providerRefId matching our txnId field
-        tx = await Transaction.findOne({ txnId: String(providerRefId || '') });
+      try { logger.info('[wallet-webhook] findOne by refId attempt', { refId: String(thirdPartyId) }); } catch (_) {}
+      try { tx = await Transaction.findOne({ refId: String(thirdPartyId) }); } catch (e) { try { logger.error('[wallet-webhook] findOne refId error', { error: e && e.message, stack: e && e.stack }); } catch (_) {} }
+      try { logger.info('[wallet-webhook] findOne refId result', { found: !!tx }); } catch (_) {}
+      if (!tx && providerRefId) {
+        try { logger.info('[wallet-webhook] findOne by txnId (providerRefId) attempt', { txnId: String(providerRefId) }); } catch (_) {}
+        try { tx = await Transaction.findOne({ txnId: String(providerRefId) }); } catch (e) { try { logger.error('[wallet-webhook] findOne txnId(providerRefId) error', { error: e && e.message, stack: e && e.stack }); } catch (_) {} }
+        try { logger.info('[wallet-webhook] findOne txnId(providerRefId) result', { found: !!tx }); } catch (_) {}
       }
     }
-    // Fallback to gateway txnId
     if (!tx && gwTxnId) {
-      tx = await Transaction.findOne({ txnId: String(gwTxnId) });
+      try { logger.info('[wallet-webhook] findOne by txnId attempt', { txnId: String(gwTxnId) }); } catch (_) {}
+      try { tx = await Transaction.findOne({ txnId: String(gwTxnId) }); } catch (e) { try { logger.error('[wallet-webhook] findOne txnId error', { error: e && e.message, stack: e && e.stack }); } catch (_) {} }
+      try { logger.info('[wallet-webhook] findOne txnId result', { found: !!tx }); } catch (_) {}
     }
     if (process.env.WALLET_WEBHOOK_DEBUG === "1") {
       // eslint-disable-next-line no-console
@@ -287,7 +290,7 @@ exports.webhook = async (req, res) => {
       });
     }
 
-    // Robust status normalization to handle various providers
+    // 4) Normalize the status (success|failed|pending) from possible fields
     const rawCandidates = [
       data.Status,
       data.status,
@@ -361,6 +364,7 @@ exports.webhook = async (req, res) => {
         normalizedStatus = "failed";
       }
     }
+    try { logger.info('[wallet-webhook] status normalization', { normalizedStatus, rawCandidates, codeCandidates, successBool, reason: data.StatusReason || data.message || data.reason }); } catch (_) {}
 
     const previousStatus = tx.status;
     tx.txnId = gwTxnId || tx.txnId;
@@ -396,7 +400,8 @@ exports.webhook = async (req, res) => {
     // Idempotency: if already final state, do not re-apply wallet mutation
     const wasFinal =
       previousStatus === "success" || previousStatus === "failed";
-    await tx.save();
+    try { logger.info('[wallet-webhook] saving transaction', { id: String(tx._id), prevStatus: previousStatus, newStatus: tx.status }); } catch (_) {}
+    try { await tx.save(); } catch (e) { try { logger.error('[wallet-webhook] save error', { error: e && e.message, stack: e && e.stack }); } catch (_) {} throw e; }
     // Reload the transaction to ensure we have a fresh Mongoose document instance
     try {
       tx = await Transaction.findById(tx._id);
@@ -434,17 +439,23 @@ exports.webhook = async (req, res) => {
             delta = financeService.calculatePackage(providerAmount, commissionRate);
           }
         } catch (_) {}
-        await Wallet.updateOne(
-          { userId: tx.userId, role: tx.role },
-          { $inc: { balance: delta } },
-          { upsert: true }
-        );
+        try {
+          await Wallet.updateOne(
+            { userId: tx.userId, role: tx.role },
+            { $inc: { balance: delta } },
+            { upsert: true }
+          );
+          try { logger.info('[wallet-webhook] wallet credit applied', { userId: tx.userId, role: tx.role, delta }); } catch (_) {}
+        } catch (e) { try { logger.error('[wallet-webhook] wallet credit failed', { error: e && e.message, stack: e && e.stack }); } catch (_) {} }
       } else if (tx.type === "debit") {
-        await Wallet.updateOne(
-          { userId: tx.userId, role: tx.role },
-          { $inc: { balance: -providerAmount } },
-          { upsert: true }
-        );
+        try {
+          await Wallet.updateOne(
+            { userId: tx.userId, role: tx.role },
+            { $inc: { balance: -providerAmount } },
+            { upsert: true }
+          );
+          try { logger.info('[wallet-webhook] wallet debit applied', { userId: tx.userId, role: tx.role, delta: -providerAmount }); } catch (_) {}
+        } catch (e) { try { logger.error('[wallet-webhook] wallet debit failed', { error: e && e.message, stack: e && e.stack }); } catch (_) {} }
       }
       if (process.env.WALLET_WEBHOOK_DEBUG === "1") {
         // eslint-disable-next-line no-console
@@ -499,8 +510,8 @@ exports.webhook = async (req, res) => {
           refId: tx.refId,
           updatedAt: tx.updatedAt
         };
-        if (room) { try { io.to(room).emit('wallet:transaction_update', emitPayload); } catch (_) {} }
-        try { io.to(DEFAULT_OPS_ROOM).emit('wallet:transaction_update', emitPayload); } catch (_) {}
+        if (room) { try { io.to(room).emit('wallet:transaction_update', emitPayload); try { logger.info('[wallet-webhook] emitted wallet:transaction_update to user room', { room, status: tx.status }); } catch (_) {} } catch (_) {} }
+        try { io.to(DEFAULT_OPS_ROOM).emit('wallet:transaction_update', emitPayload); try { logger.info('[wallet-webhook] emitted wallet:transaction_update to ops', { status: tx.status }); } catch (_) {} } catch (_) {}
       }
     } catch (_) {}
 
@@ -523,12 +534,9 @@ exports.webhook = async (req, res) => {
       updatedBy: data.updatedBy || data.UpdatedBy,
     });
   } catch (e) {
-    // Always ACK with ok=false to prevent retries storms; log error
-    if (process.env.WALLET_WEBHOOK_DEBUG === "1") {
-      // eslint-disable-next-line no-console
-      console.error("[wallet-webhook] error:", e);
-    }
-    return res.status(200).json({ ok: false, error: e.message });
+    // 9) Catch and log all errors with stack traces
+    try { logger.error('[wallet-webhook] unhandled error', { error: e && e.message, stack: e && e.stack }); } catch (_) {}
+    return res.status(200).json({ ok: false, error: e && e.message });
   }
 };
 
