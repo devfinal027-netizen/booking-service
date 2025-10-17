@@ -332,15 +332,24 @@ async function fetchEtaUsingGoogle({ origin, destination, apiKey }) {
   const base = 'https://maps.googleapis.com/maps/api/distancematrix/json';
   const url = `${base}?origins=${oLat},${oLng}&destinations=${dLat},${dLng}&mode=driving&departure_time=now&traffic_model=best_guess&key=${encodeURIComponent(apiKey)}`;
   const resp = await axios.get(url, { timeout: 6000 });
-  const row = resp && resp.data && Array.isArray(resp.data.rows) && resp.data.rows[0] && resp.data.rows[0].elements && resp.data.rows[0].elements[0];
-  const status = row && row.status;
-  if (!row || status !== 'OK') {
-    const reason = status || 'UNKNOWN';
-    const err = new Error(`Distance Matrix error: ${reason}`);
+  const data = resp && resp.data ? resp.data : {};
+  const apiStatus = data.status;
+  if (apiStatus && apiStatus !== 'OK') {
+    const err = new Error(`Distance Matrix API status: ${apiStatus}${data.error_message ? ` - ${data.error_message}` : ''}`);
+    err.code = apiStatus;
+    throw err;
+  }
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  const elements = rows[0] && Array.isArray(rows[0].elements) ? rows[0].elements : [];
+  const el = elements[0];
+  const elStatus = el && el.status;
+  if (!el || elStatus !== 'OK') {
+    const reason = elStatus || 'NO_ELEMENTS';
+    const err = new Error(`Distance Matrix element status: ${reason}`);
     err.code = reason;
     throw err;
   }
-  const duration = row.duration_in_traffic || row.duration;
+  const duration = el.duration_in_traffic || el.duration;
   return {
     etaSeconds: duration && Number.isFinite(duration.value) ? Number(duration.value) : undefined,
     etaText: duration && duration.text ? String(duration.text) : undefined
