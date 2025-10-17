@@ -390,6 +390,10 @@ exports.webhook = async (req, res) => {
     const wasFinal =
       previousStatus === "success" || previousStatus === "failed";
     await tx.save();
+    // Reload the transaction to ensure we have a fresh Mongoose document instance
+    try {
+      tx = await Transaction.findById(tx._id);
+    } catch (_) {}
     if (process.env.WALLET_WEBHOOK_DEBUG === "1") {
       // eslint-disable-next-line no-console
       console.log("[wallet-webhook] updated tx:", {
