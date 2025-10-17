@@ -544,7 +544,7 @@ try {
       let liveWriteError = false;
       try {
         const rawActiveBookings = await Booking.find({ driverId: driverDbId, status: { $in: ['accepted', 'ongoing'] } })
-          .select({ _id: 1, passengerId: 1, status: 1 })
+          .select({ _id: 1, passengerId: 1, status: 1, pickup: 1, dropoff: 1, startedAt: 1, driverId: 1 })
           .limit(25)
           .lean();
 

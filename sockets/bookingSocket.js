@@ -388,6 +388,13 @@ module.exports = (io, socket) => {
         return;
       }
       const updated = await lifecycle.startTrip(bookingId, startLocation);
+      // Guard: ensure dropoff exists for ETA later; if missing and current booking has passenger dropoff, keep as is (booking creation should set dropoff)
+      try {
+        if (!updated.dropoff || updated.dropoff.latitude == null || updated.dropoff.longitude == null) {
+          // no-op: we don't override here; log for observability
+          logger.warn('[trip:started] dropoff missing for booking', { bookingId: String(updated._id) });
+        }
+      } catch (_) {}
       bookingEvents.emitTripStarted(updated);
       // Also emit an initial trip:ongoing update at the start location for clients expecting continuous stream from start
       try { if (startLocation) bookingEvents.emitTripOngoing(updated, startLocation); } catch (_) {}
@@ -418,6 +425,9 @@ module.exports = (io, socket) => {
       if (!booking) {
         emitSocketError(socket, 'booking_error', 'NOT_FOUND', 'Booking not found or not assigned to you', { source: 'trip:ongoing', extras: { bookingId } });
         return;
+      }
+      if (!booking.dropoff || booking.dropoff.latitude == null || booking.dropoff.longitude == null) {
+        try { logger.warn('[trip:ongoing] dropoff missing; ETA will be skipped', { bookingId }); } catch (_) {}
       }
       const point = await lifecycle.updateTripLocation(bookingId, String(socket.user.id), location);
       bookingEvents.emitTripOngoing({ _id: booking._id, driverId: booking.driverId, passengerId: booking.passengerId }, point);

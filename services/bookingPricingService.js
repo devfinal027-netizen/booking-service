@@ -361,9 +361,14 @@ async function calculateAndBroadcastEta({ booking, driverLocation, io }) {
     }
 
     // Destination MUST be the dropoff location while trip is ongoing
-    const dest = booking.dropoff;
+    let dest = booking.dropoff;
+    // If dropoff is missing but we have a reasonable pickup, use pickup as temporary destination to avoid total skips; log for visibility
     if (!dest || dest.latitude == null || dest.longitude == null) {
-      try { logger.warn('[eta] skipped: dropoff destination missing', { bookingId: String(booking._id) }); } catch (_) {}
+      try { logger.warn('[eta] dropoff missing; falling back to pickup for interim ETA', { bookingId: String(booking._id) }); } catch (_) {}
+      dest = booking.pickup;
+    }
+    if (!dest || dest.latitude == null || dest.longitude == null) {
+      try { logger.warn('[eta] skipped: destination missing (no dropoff/pickup)', { bookingId: String(booking._id) }); } catch (_) {}
       return;
     }
 
