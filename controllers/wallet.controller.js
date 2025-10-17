@@ -331,7 +331,7 @@ exports.webhook = async (req, res) => {
       });
     }
 
-    if (!wasFinal && normalizedStatus === "success") {
+    if (!wasFinal && (normalizedStatus === "success" || normalizedStatus === "failed")) {
       // For credits, prefer adjustedAmount (intended topup) then amount; for debits, prefer amount then adjustedAmount
       const providerAmount =
         tx.type === "credit"
@@ -377,6 +377,29 @@ exports.webhook = async (req, res) => {
           delta: tx.type === "credit" ? providerAmount : -providerAmount,
         });
       }
+      // Emit realtime transaction update for success/failure
+      try {
+        const { getIo, DEFAULT_OPS_ROOM } = require('../sockets/utils');
+        const io = getIo && getIo();
+        if (io) {
+          const room = tx.role === 'driver' ? `driver:${tx.userId}` : (tx.role === 'passenger' ? `passenger:${tx.userId}` : null);
+          const emitPayload = {
+            transactionId: String(tx._id),
+            status: normalizedStatus,
+            amount: tx.amount,
+            type: tx.type,
+            method: tx.method,
+            userId: tx.userId,
+            role: tx.role,
+            msisdn: tx.msisdn,
+            txnId: tx.txnId,
+            refId: tx.refId,
+            updatedAt: tx.updatedAt
+          };
+          if (room) { try { io.to(room).emit('wallet:transaction_update', emitPayload); } catch (_) {} }
+          try { io.to(DEFAULT_OPS_ROOM).emit('wallet:transaction_update', emitPayload); } catch (_) {}
+        }
+      } catch (_) {}
     }
 
     // Emit realtime transaction update to user and ops
@@ -403,21 +426,22 @@ exports.webhook = async (req, res) => {
       }
     } catch (_) {}
 
-    // Respond with concise, important fields only
+    // Respond with normalized status so integrators see success/failed/pending clearly
     return res.status(200).json({
       ok: true,
-      txnId: data.TxnId || data.txnId,
-      refId: data.RefId || data.refId,
-      thirdPartyId: data.thirdPartyId,
-      status: data.Status || data.status,
-      statusReason: data.StatusReason || data.message,
-      amount: data.amount || data.Amount || data.TotalAmount,
+      transactionId: String(tx._id),
+      status: normalizedStatus,
+      providerStatus: rawStatus,
+      txnId: tx.txnId || data.TxnId || data.txnId,
+      refId: tx.refId || data.RefId || data.refId,
+      thirdPartyId,
+      amountReported: data.amount || data.Amount || data.TotalAmount,
       currency: data.currency || data.Currency || "ETB",
-      msisdn: data.Msisdn || data.msisdn,
+      msisdn: tx.msisdn || data.Msisdn || data.msisdn,
       paymentVia: data.paymentVia || data.PaymentMethod,
-      message: data.message,
+      message: data.message || data.StatusReason,
       updateType: data.updateType || data.UpdateType,
-      updatedAt: new Date(),
+      updatedAt: tx.updatedAt || new Date(),
       updatedBy: data.updatedBy || data.UpdatedBy,
     });
   } catch (e) {
