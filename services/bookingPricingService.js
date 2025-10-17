@@ -6,6 +6,33 @@ const metrics = require('../utils/metrics');
 const geolib = require('geolib');
 const axios = require('axios');
 const { getEta } = require('../utils/routing');
+async function fetchEtaUsingRoutesApi({ origin, destination, apiKey }) {
+  // Google Routes API (Preview) basic travel time fallback
+  const url = 'https://routes.googleapis.com/directions/v2:computeRoutes';
+  const body = {
+    origin: { location: { latLng: { latitude: origin.latitude, longitude: origin.longitude } } },
+    destination: { location: { latLng: { latitude: destination.latitude, longitude: destination.longitude } } },
+    travelMode: 'DRIVE',
+    routingPreference: 'TRAFFIC_AWARE',
+    computeAlternativeRoutes: false,
+    routeModifiers: { avoidTolls: false, avoidHighways: false, avoidFerries: false },
+    units: 'METRIC'
+  };
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-Goog-Api-Key': apiKey,
+    'X-Goog-FieldMask': 'routes.duration,routes.legs.duration,routes.description'
+  };
+  const resp = await axios.post(url, body, { headers, timeout: 6000 });
+  const routes = resp && resp.data && Array.isArray(resp.data.routes) ? resp.data.routes : [];
+  const first = routes[0];
+  const legDur = first && first.legs && first.legs[0] && first.legs[0].duration && first.legs[0].duration;
+  const routeDur = first && first.duration && first.duration;
+  const pick = legDur || routeDur; // durations are ISO 8601 strings like "123s"
+  if (!pick) throw new Error('Routes API returned no duration');
+  const seconds = typeof pick === 'string' && pick.endsWith('s') ? parseInt(pick.replace(/s$/,''), 10) : Number(pick);
+  return { etaSeconds: Number.isFinite(seconds) ? seconds : undefined, etaText: Number.isFinite(seconds) ? `${Math.ceil(seconds/60)} min` : undefined };
+}
 
 // Legacy function - maintained for backward compatibility
 async function recalcForBooking(bookingId) {
@@ -356,7 +383,7 @@ async function fetchEtaUsingGoogle({ origin, destination, apiKey }) {
   };
 }
 
-async function calculateAndBroadcastEta({ booking, driverLocation, io }) {
+async function calculateAndBroadcastEta({ booking, driverLocation, io, vehicleTypeOverride }) {
   try {
     if (!booking || !driverLocation) return;
     try { logger.info('[eta] trigger', { bookingId: String(booking._id), status: booking.status, driverLocation }); } catch (_) {}
@@ -393,6 +420,16 @@ async function calculateAndBroadcastEta({ booking, driverLocation, io }) {
       etaText = google.etaText;
     } catch (apiErr) {
       try { logger.warn('[eta] Google API failed; falling back to heuristic ETA', { bookingId: String(booking._id), error: apiErr && apiErr.message }); } catch (_) {}
+      // Attempt Routes API (new) before heuristic
+      if (!etaSeconds) {
+        try {
+          const routes = await fetchEtaUsingRoutesApi({ origin, destination, apiKey: GOOGLE_MAPS_API_KEY });
+          etaSeconds = routes.etaSeconds;
+          etaText = routes.etaText;
+        } catch (routesErr) {
+          try { logger.warn('[eta] Routes API failed; using heuristic ETA', { bookingId: String(booking._id), error: routesErr && routesErr.message }); } catch (_) {}
+        }
+      }
       try {
         const fallback = await getEta({ from: { latitude: origin.latitude, longitude: origin.longitude }, to: { latitude: destination.latitude, longitude: destination.longitude }, vehicle: booking.vehicleType || 'car' });
         if (fallback && Number.isFinite(fallback.etaMinutes)) {
@@ -428,7 +465,7 @@ async function calculateAndBroadcastEta({ booking, driverLocation, io }) {
       if (roomPassenger) { try { io.to(roomPassenger).emit('booking:ETA_update', payload); } catch (_) {} }
       try { logger.info('[eta] emitted', { bookingId: String(booking._id), rooms: { booking: roomBooking, driver: roomDriver, passenger: roomPassenger } }); } catch (_) {}
     }
-    try { metrics.increment('eta.update_sent', 1, { vehicleType: booking.vehicleType || 'unknown' }); } catch (_) {}
+    try { metrics.increment('eta.update_sent', 1, { vehicleType: (booking.vehicleType || vehicleTypeOverride || 'unknown') }); } catch (_) {}
   } catch (e) {
     try { logger.error('[eta] calculate/broadcast failed', { error: e && e.message, stack: e && e.stack }); } catch (_) {}
     try { metrics.increment('eta.update_error', 1, { reason: e && e.code ? e.code : (e && e.message) || 'unknown' }); } catch (_) {}

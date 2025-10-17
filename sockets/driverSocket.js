@@ -637,7 +637,7 @@ try {
             const { getIo } = require('./utils');
             const ioRef = getIo && getIo();
             for (const booking of activeBookings) {
-              await calculateAndBroadcastEta({ booking, driverLocation: { latitude: data.latitude, longitude: data.longitude }, io: ioRef });
+              await calculateAndBroadcastEta({ booking, driverLocation: { latitude: data.latitude, longitude: data.longitude }, io: ioRef, vehicleTypeOverride: socket.user && socket.user.vehicleType });
             }
           } catch (_) {}
 
