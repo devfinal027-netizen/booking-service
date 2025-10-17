@@ -631,12 +631,13 @@ try {
             );
           }
 
-          // Trigger ETA broadcast for each active booking with throttling handled outside
+          // Trigger ETA broadcast only for ongoing trips (guarded inside service as well)
           try {
             const { calculateAndBroadcastEta } = require('../services/bookingPricingService');
             const { getIo } = require('./utils');
             const ioRef = getIo && getIo();
             for (const booking of activeBookings) {
+              if (String(booking.status || '').toLowerCase() !== 'ongoing') continue;
               await calculateAndBroadcastEta({ booking, driverLocation: { latitude: data.latitude, longitude: data.longitude }, io: ioRef, vehicleTypeOverride: socket.user && socket.user.vehicleType });
             }
           } catch (_) {}
