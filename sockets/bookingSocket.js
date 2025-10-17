@@ -91,6 +91,12 @@ module.exports = (io, socket) => {
         dropoff: data.dropoff,
         authHeader: socket.authToken ? { Authorization: socket.authToken } : undefined
       });
+      // Guard log to verify dropoff presence from passenger request
+      try {
+        if (!booking.dropoff || booking.dropoff.latitude == null || booking.dropoff.longitude == null) {
+          logger.warn('[booking:request] dropoff missing on created booking', { bookingId: String(booking._id), payloadDropoff: data && data.dropoff });
+        }
+      } catch (_) {}
       const bookingRoom = `booking:${String(booking._id)}`;
       socket.join(bookingRoom);
       const createdPayload = { id: String(booking._id), bookingId: String(booking._id) };

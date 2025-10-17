@@ -5,6 +5,7 @@ const logger = require('../utils/logger');
 const metrics = require('../utils/metrics');
 const geolib = require('geolib');
 const axios = require('axios');
+const { getEta } = require('../utils/routing');
 
 // Legacy function - maintained for backward compatibility
 async function recalcForBooking(bookingId) {
@@ -375,9 +376,26 @@ async function calculateAndBroadcastEta({ booking, driverLocation, io }) {
     const origin = { latitude: Number(driverLocation.latitude), longitude: Number(driverLocation.longitude) };
     const destination = { latitude: Number(dest.latitude), longitude: Number(dest.longitude) };
 
-    const { etaSeconds, etaText } = await fetchEtaUsingGoogle({ origin, destination, apiKey: GOOGLE_MAPS_API_KEY });
+    let etaSeconds;
+    let etaText;
+    try {
+      const google = await fetchEtaUsingGoogle({ origin, destination, apiKey: GOOGLE_MAPS_API_KEY });
+      etaSeconds = google.etaSeconds;
+      etaText = google.etaText;
+    } catch (apiErr) {
+      try { logger.warn('[eta] Google API failed; falling back to heuristic ETA', { bookingId: String(booking._id), error: apiErr && apiErr.message }); } catch (_) {}
+      try {
+        const fallback = await getEta({ from: { latitude: origin.latitude, longitude: origin.longitude }, to: { latitude: destination.latitude, longitude: destination.longitude }, vehicle: booking.vehicleType || 'car' });
+        if (fallback && Number.isFinite(fallback.etaMinutes)) {
+          etaSeconds = Math.max(1, Math.round(Number(fallback.etaMinutes) * 60));
+          etaText = `${fallback.etaMinutes} min`;
+        }
+      } catch (_) {
+        // ignore
+      }
+    }
     if (!etaSeconds) {
-      try { logger.info('[eta] skipped: API returned no eta', { bookingId: String(booking._id) }); } catch (_) {}
+      try { logger.info('[eta] skipped: no ETA after fallback', { bookingId: String(booking._id) }); } catch (_) {}
       return;
     }
 
@@ -395,6 +413,10 @@ async function calculateAndBroadcastEta({ booking, driverLocation, io }) {
       try { io.to(roomBooking).emit('eta:update', payload); } catch (_) {}
       if (roomDriver) { try { io.to(roomDriver).emit('eta:update', payload); } catch (_) {} }
       if (roomPassenger) { try { io.to(roomPassenger).emit('eta:update', payload); } catch (_) {} }
+      // Back-compat legacy channel name some clients may subscribe to
+      try { io.to(roomBooking).emit('booking:ETA_update', payload); } catch (_) {}
+      if (roomDriver) { try { io.to(roomDriver).emit('booking:ETA_update', payload); } catch (_) {} }
+      if (roomPassenger) { try { io.to(roomPassenger).emit('booking:ETA_update', payload); } catch (_) {} }
       try { logger.info('[eta] emitted', { bookingId: String(booking._id), rooms: { booking: roomBooking, driver: roomDriver, passenger: roomPassenger } }); } catch (_) {}
     }
     try { metrics.increment('eta.update_sent', 1, { vehicleType: booking.vehicleType || 'unknown' }); } catch (_) {}
