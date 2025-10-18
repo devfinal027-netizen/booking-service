@@ -1,7 +1,6 @@
 const { Wallet, Transaction } = require("../models/common");
 const santim = require("../integrations/santimpay");
 const mongoose = require("mongoose");
-const logger = require('../utils/logger');
 
 exports.topup = async (req, res) => {
   try {
@@ -9,12 +8,11 @@ exports.topup = async (req, res) => {
     if (!amount || amount <= 0)
       return res.status(400).json({ message: "amount must be > 0" });
 
-    // Phone can come from body or token
-    const bodyPhone = req.body && (req.body.msisdn || req.body.phone || req.body.phoneNumber);
-    const tokenPhone = req.user && (req.user.phone || req.user.phoneNumber || req.user.mobile);
-    const rawPhone = bodyPhone || tokenPhone;
-    if (!rawPhone)
-      return res.status(400).json({ message: "phoneNumber missing (token/body)" });
+    // Phone must come from token
+    const tokenPhone =
+      req.user && (req.user.phone || req.user.phoneNumber || req.user.mobile);
+    if (!tokenPhone)
+      return res.status(400).json({ message: "phoneNumber missing in token" });
 
     // Normalize Ethiopian MSISDN
     const normalizeMsisdnEt = (raw) => {
@@ -32,7 +30,7 @@ exports.topup = async (req, res) => {
       return s;
     };
 
-    const msisdn = normalizeMsisdnEt(rawPhone);
+    const msisdn = normalizeMsisdnEt(tokenPhone);
     if (!msisdn)
       return res.status(400).json({
         message: "Invalid phone format in token. Required: +2519XXXXXXXX",
@@ -123,7 +121,7 @@ exports.topup = async (req, res) => {
       } catch (e) {
         console.error('Error resolving driver payment preferences:', e);
       }
-      const err = new Error('paymentMethod is required. Provide paymentMethod in request body or set a default payment preference');
+      const err = new Error('paymentMethod is required and no driver payment preference is set');
       err.status = 400;
       throw err;
     }
@@ -202,18 +200,6 @@ exports.topup = async (req, res) => {
       metadata: { ...tx.metadata, gatewayResponse: gw },
     });
 
-    // Emit initial pending update over socket for realtime clients
-    try {
-      const { getIo, DEFAULT_OPS_ROOM } = require('../sockets/utils');
-      const io = getIo && getIo();
-      if (io) {
-        const room = role === 'driver' ? `driver:${userId}` : (role === 'passenger' ? `passenger:${userId}` : null);
-        const payload = { transactionId: txId.toString(), status: 'pending', amount, type: 'credit', method: 'santimpay', userId, role, msisdn, updatedAt: new Date(), reason };
-        if (room) { try { io.to(room).emit('wallet:transaction_update', payload); } catch (_) {} }
-        try { io.to(DEFAULT_OPS_ROOM).emit('wallet:transaction_update', payload); } catch (_) {}
-      }
-    } catch (_) {}
-
     return res.status(202).json({
       message: "Topup initiated",
       transactionId: txId.toString(),
@@ -226,47 +212,38 @@ exports.topup = async (req, res) => {
 
 exports.webhook = async (req, res) => {
   try {
-    // 1) Log full incoming payload
+    // Expect SantimPay to call with fields including txnId, Status, amount, reason, msisdn, refId, thirdPartyId
     const body = req.body || {};
     const data = body.data || body;
-    try { logger.info('[wallet-webhook] received payload', { body }); } catch (_) {}
+    // Debug log (can be toggled off via env)
+    if (process.env.WALLET_WEBHOOK_DEBUG === "1") {
+      // eslint-disable-next-line no-console
+      console.log("[wallet-webhook] received:", data);
+    }
     // Prefer the id we originally sent (provider echoes it as thirdPartyId). Do not use provider RefId as our id.
-    let thirdPartyId =
+    const thirdPartyId =
       data.thirdPartyId ||
       data.ID ||
       data.id ||
       data.transactionId ||
       data.clientReference;
-    if (!thirdPartyId && body && body.id) {
-      thirdPartyId = body.id;
-    }
     const providerRefId = data.RefId || data.refId;
     const gwTxnId = data.TxnId || data.txnId;
-    try { logger.info('[wallet-webhook] identifiers parsed', { thirdPartyId, providerRefId, gwTxnId }); } catch (_) {}
     if (!thirdPartyId && !gwTxnId)
       return res.status(400).json({ message: "Invalid webhook payload" });
 
     let tx = null;
-    // 3) Attempt to find the transaction with logging at each step
+    // If thirdPartyId looks like an ObjectId, try findById
     if (thirdPartyId && mongoose.Types.ObjectId.isValid(String(thirdPartyId))) {
-      try { logger.info('[wallet-webhook] findById attempt', { thirdPartyId }); } catch (_) {}
-      try { tx = await Transaction.findById(thirdPartyId); } catch (e) { try { logger.error('[wallet-webhook] findById error', { error: e && e.message, stack: e && e.stack }); } catch (_) {} }
-      try { logger.info('[wallet-webhook] findById result', { found: !!tx }); } catch (_) {}
+      tx = await Transaction.findById(thirdPartyId);
     }
+    // Otherwise try our refId match (we set refId to our ObjectId string when creating the tx)
     if (!tx && thirdPartyId) {
-      try { logger.info('[wallet-webhook] findOne by refId attempt', { refId: String(thirdPartyId) }); } catch (_) {}
-      try { tx = await Transaction.findOne({ refId: String(thirdPartyId) }); } catch (e) { try { logger.error('[wallet-webhook] findOne refId error', { error: e && e.message, stack: e && e.stack }); } catch (_) {} }
-      try { logger.info('[wallet-webhook] findOne refId result', { found: !!tx }); } catch (_) {}
-      if (!tx && providerRefId) {
-        try { logger.info('[wallet-webhook] findOne by txnId (providerRefId) attempt', { txnId: String(providerRefId) }); } catch (_) {}
-        try { tx = await Transaction.findOne({ txnId: String(providerRefId) }); } catch (e) { try { logger.error('[wallet-webhook] findOne txnId(providerRefId) error', { error: e && e.message, stack: e && e.stack }); } catch (_) {} }
-        try { logger.info('[wallet-webhook] findOne txnId(providerRefId) result', { found: !!tx }); } catch (_) {}
-      }
+      tx = await Transaction.findOne({ refId: String(thirdPartyId) });
     }
+    // Fallback to gateway txnId
     if (!tx && gwTxnId) {
-      try { logger.info('[wallet-webhook] findOne by txnId attempt', { txnId: String(gwTxnId) }); } catch (_) {}
-      try { tx = await Transaction.findOne({ txnId: String(gwTxnId) }); } catch (e) { try { logger.error('[wallet-webhook] findOne txnId error', { error: e && e.message, stack: e && e.stack }); } catch (_) {} }
-      try { logger.info('[wallet-webhook] findOne txnId result', { found: !!tx }); } catch (_) {}
+      tx = await Transaction.findOne({ txnId: String(gwTxnId) });
     }
     if (process.env.WALLET_WEBHOOK_DEBUG === "1") {
       // eslint-disable-next-line no-console
@@ -290,81 +267,16 @@ exports.webhook = async (req, res) => {
       });
     }
 
-    // 4) Normalize the status (success|failed|pending) from possible fields
-    const rawCandidates = [
-      data.Status,
-      data.status,
-      data.paymentStatus,
-      data.txnStatus,
-      data.state,
-      data.result,
-      data.response,
-      data.UpdateType,
-    ]
-      .filter((v) => v != null)
-      .map((v) => String(v).toUpperCase());
-
-    const codeCandidates = [
-      data.statusCode,
-      data.code,
-      data.resultCode,
-      data.responseCode,
-    ]
-      .filter((v) => v != null)
-      .map((v) => String(v).toUpperCase());
-
-    const successBool =
-      String(data.success).toLowerCase() === "true" || data.success === true;
-
-    const SUCCESS_SET = new Set([
-      "OK",
-      "COMPLETED",
-      "SUCCESS",
-      "APPROVED",
-      "PAID",
-      "SUCCESSFUL",
-    ]);
-    const FAILED_SET = new Set([
-      "FAILED",
-      "FAILURE",
-      "DECLINED",
-      "REJECTED",
-      "ERROR",
-      "EXPIRED",
-      "TIMEOUT",
-      "CANCELED",
-      "CANCELLED",
-      "REVERSED",
-      "CHARGEBACK",
-      "CHARGED_BACK",
-    ]);
-
-    let normalizedStatus = "pending";
-    const rawStatusUpper = rawCandidates[0] || "";
-    if (
-      successBool ||
-      rawCandidates.some((s) => SUCCESS_SET.has(s)) ||
-      codeCandidates.some((s) => SUCCESS_SET.has(s))
-    ) {
-      normalizedStatus = "success";
-    } else if (
-      rawCandidates.some((s) => FAILED_SET.has(s)) ||
-      codeCandidates.some((s) => FAILED_SET.has(s))
-    ) {
-      normalizedStatus = "failed";
-    } else {
-      const reasonMsg = String(
-        data.StatusReason || data.message || data.reason || ""
-      ).toLowerCase();
-      if (
-        /(fail|declin|reject|error|timeout|expired|cancel|reverse|chargeback)/.test(
-          reasonMsg
-        )
-      ) {
-        normalizedStatus = "failed";
-      }
-    }
-    try { logger.info('[wallet-webhook] status normalization', { normalizedStatus, rawCandidates, codeCandidates, successBool, reason: data.StatusReason || data.message || data.reason }); } catch (_) {}
+    const rawStatus = (data.Status || data.status || "")
+      .toString()
+      .toUpperCase();
+    const normalizedStatus = ["COMPLETED", "SUCCESS", "APPROVED"].includes(
+      rawStatus
+    )
+      ? "success"
+      : ["FAILED", "CANCELLED", "DECLINED"].includes(rawStatus)
+      ? "failed"
+      : "pending";
 
     const previousStatus = tx.status;
     tx.txnId = gwTxnId || tx.txnId;
@@ -391,21 +303,13 @@ exports.webhook = async (req, res) => {
       vatAmountInPercent: data.vatAmountInPercent || data.VatAmountInPercent,
       lotteryTax: data.lotteryTax,
       reason: data.reason,
-      providerStatus: rawStatusUpper,
-      providerCodes: codeCandidates,
-      providerSuccessFlag: successBool,
     };
     tx.updatedAt = new Date();
 
     // Idempotency: if already final state, do not re-apply wallet mutation
     const wasFinal =
       previousStatus === "success" || previousStatus === "failed";
-    try { logger.info('[wallet-webhook] saving transaction', { id: String(tx._id), prevStatus: previousStatus, newStatus: tx.status }); } catch (_) {}
-    try { await tx.save(); } catch (e) { try { logger.error('[wallet-webhook] save error', { error: e && e.message, stack: e && e.stack }); } catch (_) {} throw e; }
-    // Reload the transaction to ensure we have a fresh Mongoose document instance
-    try {
-      tx = await Transaction.findById(tx._id);
-    } catch (_) {}
+    await tx.save();
     if (process.env.WALLET_WEBHOOK_DEBUG === "1") {
       // eslint-disable-next-line no-console
       console.log("[wallet-webhook] updated tx:", {
@@ -414,7 +318,7 @@ exports.webhook = async (req, res) => {
       });
     }
 
-    if (!wasFinal && (normalizedStatus === "success" || normalizedStatus === "failed")) {
+    if (!wasFinal && normalizedStatus === "success") {
       // For credits, prefer adjustedAmount (intended topup) then amount; for debits, prefer amount then adjustedAmount
       const providerAmount =
         tx.type === "credit"
@@ -439,23 +343,17 @@ exports.webhook = async (req, res) => {
             delta = financeService.calculatePackage(providerAmount, commissionRate);
           }
         } catch (_) {}
-        try {
-          await Wallet.updateOne(
-            { userId: tx.userId, role: tx.role },
-            { $inc: { balance: delta } },
-            { upsert: true }
-          );
-          try { logger.info('[wallet-webhook] wallet credit applied', { userId: tx.userId, role: tx.role, delta }); } catch (_) {}
-        } catch (e) { try { logger.error('[wallet-webhook] wallet credit failed', { error: e && e.message, stack: e && e.stack }); } catch (_) {} }
+        await Wallet.updateOne(
+          { userId: tx.userId, role: tx.role },
+          { $inc: { balance: delta } },
+          { upsert: true }
+        );
       } else if (tx.type === "debit") {
-        try {
-          await Wallet.updateOne(
-            { userId: tx.userId, role: tx.role },
-            { $inc: { balance: -providerAmount } },
-            { upsert: true }
-          );
-          try { logger.info('[wallet-webhook] wallet debit applied', { userId: tx.userId, role: tx.role, delta: -providerAmount }); } catch (_) {}
-        } catch (e) { try { logger.error('[wallet-webhook] wallet debit failed', { error: e && e.message, stack: e && e.stack }); } catch (_) {} }
+        await Wallet.updateOne(
+          { userId: tx.userId, role: tx.role },
+          { $inc: { balance: -providerAmount } },
+          { upsert: true }
+        );
       }
       if (process.env.WALLET_WEBHOOK_DEBUG === "1") {
         // eslint-disable-next-line no-console
@@ -466,77 +364,32 @@ exports.webhook = async (req, res) => {
           delta: tx.type === "credit" ? providerAmount : -providerAmount,
         });
       }
-      // Emit realtime transaction update for success/failure
-      try {
-        const { getIo, DEFAULT_OPS_ROOM } = require('../sockets/utils');
-        const io = getIo && getIo();
-        if (io) {
-          const room = tx.role === 'driver' ? `driver:${tx.userId}` : (tx.role === 'passenger' ? `passenger:${tx.userId}` : null);
-          const emitPayload = {
-            transactionId: String(tx._id),
-            status: normalizedStatus,
-            amount: tx.amount,
-            type: tx.type,
-            method: tx.method,
-            userId: tx.userId,
-            role: tx.role,
-            msisdn: tx.msisdn,
-            txnId: tx.txnId,
-            refId: tx.refId,
-            updatedAt: tx.updatedAt
-          };
-          if (room) { try { io.to(room).emit('wallet:transaction_update', emitPayload); } catch (_) {} }
-          try { io.to(DEFAULT_OPS_ROOM).emit('wallet:transaction_update', emitPayload); } catch (_) {}
-        }
-      } catch (_) {}
     }
 
-    // Emit realtime transaction update to user and ops (for any status change)
-    try {
-      const { getIo, DEFAULT_OPS_ROOM } = require('../sockets/utils');
-      const io = getIo && getIo();
-      if (io) {
-        const room = tx.role === 'driver' ? `driver:${tx.userId}` : (tx.role === 'passenger' ? `passenger:${tx.userId}` : null);
-        const emitPayload = {
-          transactionId: String(tx._id),
-          status: tx.status,
-          amount: tx.amount,
-          type: tx.type,
-          method: tx.method,
-          userId: tx.userId,
-          role: tx.role,
-          msisdn: tx.msisdn,
-          txnId: tx.txnId,
-          refId: tx.refId,
-          updatedAt: tx.updatedAt
-        };
-        if (room) { try { io.to(room).emit('wallet:transaction_update', emitPayload); try { logger.info('[wallet-webhook] emitted wallet:transaction_update to user room', { room, status: tx.status }); } catch (_) {} } catch (_) {} }
-        try { io.to(DEFAULT_OPS_ROOM).emit('wallet:transaction_update', emitPayload); try { logger.info('[wallet-webhook] emitted wallet:transaction_update to ops', { status: tx.status }); } catch (_) {} } catch (_) {}
-      }
-    } catch (_) {}
-
-    // Respond with normalized status so integrators see success/failed/pending clearly
+    // Respond with concise, important fields only
     return res.status(200).json({
       ok: true,
-      transactionId: String(tx._id),
-      status: normalizedStatus,
-      providerStatus: rawStatus,
-      txnId: tx.txnId || data.TxnId || data.txnId,
-      refId: tx.refId || data.RefId || data.refId,
-      thirdPartyId,
-      amountReported: data.amount || data.Amount || data.TotalAmount,
+      txnId: data.TxnId || data.txnId,
+      refId: data.RefId || data.refId,
+      thirdPartyId: data.thirdPartyId,
+      status: data.Status || data.status,
+      statusReason: data.StatusReason || data.message,
+      amount: data.amount || data.Amount || data.TotalAmount,
       currency: data.currency || data.Currency || "ETB",
-      msisdn: tx.msisdn || data.Msisdn || data.msisdn,
+      msisdn: data.Msisdn || data.msisdn,
       paymentVia: data.paymentVia || data.PaymentMethod,
-      message: data.message || data.StatusReason,
+      message: data.message,
       updateType: data.updateType || data.UpdateType,
-      updatedAt: tx.updatedAt || new Date(),
+      updatedAt: new Date(),
       updatedBy: data.updatedBy || data.UpdatedBy,
     });
   } catch (e) {
-    // 9) Catch and log all errors with stack traces
-    try { logger.error('[wallet-webhook] unhandled error', { error: e && e.message, stack: e && e.stack }); } catch (_) {}
-    return res.status(200).json({ ok: false, error: e && e.message });
+    // Always ACK with ok=false to prevent retries storms; log error
+    if (process.env.WALLET_WEBHOOK_DEBUG === "1") {
+      // eslint-disable-next-line no-console
+      console.error("[wallet-webhook] error:", e);
+    }
+    return res.status(200).json({ ok: false, error: e.message });
   }
 };
 
@@ -619,7 +472,7 @@ exports.withdraw = async (req, res) => {
           const name = me && me.paymentPreference && me.paymentPreference.name ? String(me.paymentPreference.name).trim() : null;
           if (name) return name;
         } catch (_) {}
-        const err = new Error('paymentMethod is required. Provide paymentMethod in request body or set a default payment preference');
+        const err = new Error('paymentMethod is required and no driver payment preference is set');
         err.status = 400;
         throw err;
       }
