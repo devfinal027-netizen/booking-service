@@ -123,9 +123,12 @@ async function completeTrip(bookingId, endLocation, options = {}) {
     booking.endLocation = completionLocation;
   }
 
-  // Compute distance
+  // Compute distance: Prefer the tracked distance from ongoing updates
   let distanceKm = 0;
-  if (trip && Array.isArray(trip.locations) && trip.locations.length >= 2) {
+  const trackedOngoingDistance = Number(booking.distanceKm);
+  if (Number.isFinite(trackedOngoingDistance) && trackedOngoingDistance > 0) {
+    distanceKm = trackedOngoingDistance;
+  } else if (trip && Array.isArray(trip.locations) && trip.locations.length >= 2) {
     distanceKm = computePathDistanceKm(trip.locations);
   } else if (booking.startLocation && completionLocation) {
     distanceKm = haversineKm(
@@ -138,6 +141,8 @@ async function completeTrip(bookingId, endLocation, options = {}) {
       { latitude: booking.dropoff.latitude, longitude: booking.dropoff.longitude }
     );
   }
+  // Normalize rounding to 2 decimals to match ongoing calculations
+  distanceKm = Math.round(Number(distanceKm || 0) * 100) / 100;
 
   const waitingTimeMinutes = Math.max(0, Math.round(((completedAt - new Date(startedAt)) / 60000)));
 
