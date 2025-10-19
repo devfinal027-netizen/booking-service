@@ -4,6 +4,7 @@ const { emitBookingTargets } = require('../sockets/utils');
 const logger = require('../utils/logger');
 const metrics = require('../utils/metrics');
 const geolib = require('geolib');
+const { computePathDistance } = require('../utils/computePathDistance');
 const axios = require('axios');
 const { getEta } = require('../utils/routing');
 async function fetchEtaUsingRoutesApi({ origin, destination, apiKey }) {
@@ -176,24 +177,24 @@ async function calculateLivePricing(bookingId, currentLocation) {
     let movingMinutes = 0;
     let waitingMinutes = 0;
     if (locations.length >= 2) {
+      // Use centralized distance computation for consistency
+      distanceTraveled = computePathDistance(locations);
+      // Estimate moving/waiting minutes using the same gates as before
       for (let i = 1; i < locations.length; i++) {
         const a = locations[i - 1];
         const b = locations[i];
-        const segmentDistanceKm = geolib.getDistance(
+        const segmentKm = geolib.getDistance(
           { latitude: a.lat, longitude: a.lng },
           { latitude: b.lat, longitude: b.lng }
         ) / 1000;
         const t1 = a.timestamp ? new Date(a.timestamp).getTime() : undefined;
         const t2 = b.timestamp ? new Date(b.timestamp).getTime() : undefined;
         const dtSec = (Number.isFinite(t1) && Number.isFinite(t2)) ? Math.max(0, (t2 - t1) / 1000) : undefined;
-
-        const minDistanceKm = 0.025; // 25m
-        const minDtSec = 5; // 5s
-        const minSpeedMps = 1; // 1 m/s
-        const speedMps = (dtSec && dtSec > 0) ? (segmentDistanceKm * 1000) / dtSec : 0;
-
-        if (dtSec != null && dtSec >= minDtSec && segmentDistanceKm >= minDistanceKm && speedMps >= minSpeedMps) {
-          distanceTraveled += segmentDistanceKm;
+        const minDistanceKm = 0.025;
+        const minDtSec = 5;
+        const minSpeedMps = 1;
+        const speedMps = (dtSec && dtSec > 0) ? (segmentKm * 1000) / dtSec : 0;
+        if (dtSec != null && dtSec >= minDtSec && segmentKm >= minDistanceKm && speedMps >= minSpeedMps) {
           movingMinutes += dtSec / 60;
         } else if (dtSec != null && dtSec > 0) {
           waitingMinutes += dtSec / 60;

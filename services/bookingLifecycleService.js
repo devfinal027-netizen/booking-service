@@ -2,6 +2,7 @@ const { Booking } = require('../models/bookingModels');
 const TripHistory = require('../models/tripHistoryModel');
 const { Pricing } = require('../models/pricing');
 const { haversineKm } = require('../utils/distance');
+const { computePathDistance } = require('../utils/computePathDistance');
 const pricingService = require('./pricingService');
 const commissionService = require('./commissionService');
 const walletService = require('./walletService');
@@ -65,28 +66,7 @@ async function updateTripLocation(bookingId, driverId, location) {
 }
 
 function computePathDistanceKm(locations) {
-  if (!Array.isArray(locations) || locations.length < 2) return 0;
-  let totalKm = 0;
-  for (let i = 1; i < locations.length; i++) {
-    const a = locations[i - 1];
-    const b = locations[i];
-    const segmentDistanceKm = haversineKm({ latitude: a.lat, longitude: a.lng }, { latitude: b.lat, longitude: b.lng });
-    const t1 = a.timestamp ? new Date(a.timestamp).getTime() : undefined;
-    const t2 = b.timestamp ? new Date(b.timestamp).getTime() : undefined;
-    const dtSec = (Number.isFinite(t1) && Number.isFinite(t2)) ? Math.max(0, (t2 - t1) / 1000) : undefined;
-
-    // Movement gating to suppress GPS drift
-    // Require: at least 5s between points, at least 25m, and speed >= 1 m/s
-    const minDistanceKm = 0.025; // 25 meters
-    const minDtSec = 5; // 5 seconds
-    const minSpeedMps = 1; // 1 meter/second
-    const speedMps = (dtSec && dtSec > 0) ? (segmentDistanceKm * 1000) / dtSec : 0;
-
-    if (dtSec != null && dtSec >= minDtSec && segmentDistanceKm >= minDistanceKm && speedMps >= minSpeedMps) {
-      totalKm += segmentDistanceKm;
-    }
-  }
-  return totalKm;
+  return computePathDistance(locations);
 }
 
 async function completeTrip(bookingId, endLocation, options = {}) {
