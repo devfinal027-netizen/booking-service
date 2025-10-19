@@ -188,11 +188,12 @@ async function calculateLivePricing(bookingId, currentLocation) {
           augmented.push({ lat: Number(currentLocation.latitude), lng: Number(currentLocation.longitude), timestamp: new Date() });
         }
       }
-      // Use centralized distance computation for consistency (relaxed thresholds for live pricing)
+      // Use centralized distance computation for consistency; reads pricing env overrides
       distanceTraveled = computePathDistance(augmented, {
-        minDistanceMeters: Number(process.env.PRICE_DIST_MIN_METERS || 8),
-        minDtSeconds: Number(process.env.PRICE_DIST_MIN_DT_SECONDS || 1),
-        minSpeedMps: Number(process.env.PRICE_DIST_MIN_SPEED_MPS || 0.2),
+        minDistanceMeters: process.env.PRICE_DIST_MIN_METERS ? Number(process.env.PRICE_DIST_MIN_METERS) : undefined,
+        minDtSeconds: process.env.PRICE_DIST_MIN_DT_SECONDS ? Number(process.env.PRICE_DIST_MIN_DT_SECONDS) : undefined,
+        minSpeedMps: process.env.PRICE_DIST_MIN_SPEED_MPS ? Number(process.env.PRICE_DIST_MIN_SPEED_MPS) : undefined,
+        smoothingWindow: process.env.SMOOTHING_WINDOW ? Number(process.env.SMOOTHING_WINDOW) : undefined,
       });
       // Estimate moving/waiting minutes using the same gates as before
       for (let i = 1; i < augmented.length; i++) {
@@ -293,6 +294,18 @@ async function calculateLivePricing(bookingId, currentLocation) {
       finalFare: Math.round(finalFare * 100) / 100,
       minimumFareApplied: finalFare > currentFare
     });
+
+  // Prefer accumulated distance if available and greater
+  let accumulatedKm = 0;
+  try {
+    const tripAgain = await (async () => trip || await (require('../models/bookingModels').TripHistory.findOne({ bookingId: booking._id })))();
+    if (tripAgain && Number.isFinite(Number(tripAgain.distanceAccumulatedKm))) {
+      accumulatedKm = Number(tripAgain.distanceAccumulatedKm);
+    }
+  } catch (_) {}
+  if (Number.isFinite(accumulatedKm) && accumulatedKm > distanceTraveled) {
+    distanceTraveled = accumulatedKm;
+  }
 
   const result = {
       bookingId: String(booking._id),

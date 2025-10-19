@@ -27,9 +27,32 @@ function normalizePoint(p) {
  *  - minSpeedMps (default 1)
  */
 function computePathDistance(points, options = {}) {
-  const minDistanceMeters = Number(process.env.DIST_MIN_METERS || options.minDistanceMeters || 10);
-  const minDtSeconds = Number(process.env.DIST_MIN_DT_SECONDS || options.minDtSeconds || 2);
-  const minSpeedMps = Number(process.env.DIST_MIN_SPEED_MPS || options.minSpeedMps || 0.3);
+  // Threshold resolution order: explicit options -> new env -> pricing-specific env -> legacy env -> defaults
+  const minDistanceMeters = Number(
+    (options.minDistanceMeters != null ? options.minDistanceMeters : undefined) ??
+    process.env.MIN_MOVE_METERS ??
+    process.env.PRICE_DIST_MIN_METERS ??
+    process.env.DIST_MIN_METERS ??
+    10
+  );
+  const minDtSeconds = Number(
+    (options.minDtSeconds != null ? options.minDtSeconds : undefined) ??
+    process.env.BUCKET_TIME_SEC ??
+    process.env.PRICE_DIST_MIN_DT_SECONDS ??
+    process.env.DIST_MIN_DT_SECONDS ??
+    2
+  );
+  const minSpeedMps = Number(
+    (options.minSpeedMps != null ? options.minSpeedMps : undefined) ??
+    process.env.MIN_SPEED_MPS ??
+    process.env.PRICE_DIST_MIN_SPEED_MPS ??
+    process.env.DIST_MIN_SPEED_MPS ??
+    0.3
+  );
+  const smoothingWindow = Number(
+    (options.smoothingWindow != null ? options.smoothingWindow : undefined) ??
+    process.env.SMOOTHING_WINDOW ?? 0
+  );
   const distanceFn = typeof options.distanceFn === 'function'
     ? options.distanceFn // must return meters
     : (a, b) => haversineKm(a, b) * 1000; // fallback uses haversine and converts to meters
@@ -37,6 +60,36 @@ function computePathDistance(points, options = {}) {
   if (!Array.isArray(points) || points.length < 2) return 0;
   const normalized = points.map(normalizePoint).filter(Boolean);
   if (normalized.length < 2) return 0;
+
+  // Optional smoothing with simple moving average over lat/lon
+  let series = normalized;
+  if (Number.isFinite(smoothingWindow) && smoothingWindow >= 3) {
+    const w = Math.min(Math.max(3, Math.floor(smoothingWindow)), 9);
+    const smoothed = [];
+    let sumLat = 0;
+    let sumLon = 0;
+    const queue = [];
+    for (let i = 0; i < normalized.length; i++) {
+      const p = normalized[i];
+      queue.push(p);
+      sumLat += p.latitude;
+      sumLon += p.longitude;
+      if (queue.length > w) {
+        const drop = queue.shift();
+        sumLat -= drop.latitude;
+        sumLon -= drop.longitude;
+      }
+      const count = queue.length;
+      smoothed.push({
+        latitude: sumLat / count,
+        longitude: sumLon / count,
+        timestamp: p.timestamp,
+        speed: p.speed,
+        source: p.source,
+      });
+    }
+    series = smoothed;
+  }
 
   // Bucketed gating: accumulate until either distance or time threshold is reached
   let totalMeters = 0;
@@ -49,9 +102,9 @@ function computePathDistance(points, options = {}) {
   let rejectedByTime = 0;
   let rejectedBySpeed = 0;
 
-  for (let i = 1; i < normalized.length; i++) {
-    const a = normalized[i - 1];
-    const b = normalized[i];
+  for (let i = 1; i < series.length; i++) {
+    const a = series[i - 1];
+    const b = series[i];
     const meters = distanceFn({ latitude: a.latitude, longitude: a.longitude }, { latitude: b.latitude, longitude: b.longitude });
     if (!isFiniteNumber(meters)) continue;
 
