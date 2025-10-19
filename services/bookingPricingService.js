@@ -229,11 +229,7 @@ async function calculateLivePricing(bookingId, currentLocation) {
       }
     }
 
-    logger.info('[PricingService] Distance calculated:', {
-      bookingId,
-      distanceTraveled: Math.round(distanceTraveled * 100) / 100,
-      locationCount: locations.length
-    });
+    // Defer logging until after accumulated override is applied below
 
     const referenceStart = booking.startedAt || booking.acceptedAt || booking.createdAt;
     let elapsedMinutes = 0;
@@ -303,9 +299,24 @@ async function calculateLivePricing(bookingId, currentLocation) {
       accumulatedKm = Number(tripAgain.distanceAccumulatedKm);
     }
   } catch (_) {}
+  const rawDistanceKm = Math.round(distanceTraveled * 1000) / 1000;
+  let usedDistanceKm = rawDistanceKm;
+  const accumulatedDistanceKm = Number.isFinite(accumulatedKm) ? Math.round(accumulatedKm * 1000) / 1000 : 0;
   if (Number.isFinite(accumulatedKm) && accumulatedKm > distanceTraveled) {
     distanceTraveled = accumulatedKm;
+    usedDistanceKm = accumulatedDistanceKm;
   }
+
+  // Clearer log showing all distance sources
+  try {
+    logger.info('[PricingService] Distance resolved:', {
+      bookingId,
+      rawDistanceKm,
+      accumulatedDistanceKm,
+      usedDistanceKm,
+      locationCount: (trip?.locations || []).length
+    });
+  } catch (_) {}
 
   const result = {
       bookingId: String(booking._id),
