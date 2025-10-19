@@ -6,30 +6,36 @@ exports.getFinanceOverview = async (req, res) => {
   try {
     const { period = 'monthly' } = req.query;
 
-    let dateFilter = {};
-    if (period === 'daily') {
-      const today = dayjs().startOf('day').toDate();
-      const tomorrow = dayjs().add(1, 'day').startOf('day').toDate();
-      dateFilter = { tripDate: { $gte: today, $lt: tomorrow } };
-    } else if (period === 'weekly') {
-      const weekStart = dayjs().startOf('week').toDate();
-      const weekEnd = dayjs().endOf('week').toDate();
-      dateFilter = { tripDate: { $gte: weekStart, $lte: weekEnd } };
-    } else if (period === 'monthly') {
-      const monthStart = dayjs().startOf('month').toDate();
-      const monthEnd = dayjs().endOf('month').toDate();
-      dateFilter = { tripDate: { $gte: monthStart, $lte: monthEnd } };
-    }
+  // For financials (AdminEarnings/DriverEarnings), we filter by tripDate.
+  // For Booking revenue (completed trips), we must filter by completedAt.
+  let earningsDateFilter = {};
+  let bookingDateFilter = {};
+  if (period === 'daily') {
+    const today = dayjs().startOf('day').toDate();
+    const tomorrow = dayjs().add(1, 'day').startOf('day').toDate();
+    earningsDateFilter = { tripDate: { $gte: today, $lt: tomorrow } };
+    bookingDateFilter = { completedAt: { $gte: today, $lt: tomorrow } };
+  } else if (period === 'weekly') {
+    const weekStart = dayjs().startOf('week').toDate();
+    const weekEnd = dayjs().endOf('week').toDate();
+    earningsDateFilter = { tripDate: { $gte: weekStart, $lte: weekEnd } };
+    bookingDateFilter = { completedAt: { $gte: weekStart, $lte: weekEnd } };
+  } else if (period === 'monthly') {
+    const monthStart = dayjs().startOf('month').toDate();
+    const monthEnd = dayjs().endOf('month').toDate();
+    earningsDateFilter = { tripDate: { $gte: monthStart, $lte: monthEnd } };
+    bookingDateFilter = { completedAt: { $gte: monthStart, $lte: monthEnd } };
+  }
 
-    // Total revenue
-    const totalRevenue = await Booking.aggregate([
-      { $match: { status: 'completed', ...dateFilter } },
+  // Total revenue (from completed bookings in period by completedAt)
+  const totalRevenue = await Booking.aggregate([
+      { $match: { status: 'completed', ...bookingDateFilter } },
       { $group: { _id: null, total: { $sum: '$fareFinal' } } }
     ]);
 
     // Commission earned
-    const commissionEarned = await AdminEarnings.aggregate([
-      { $match: dateFilter },
+  const commissionEarned = await AdminEarnings.aggregate([
+      { $match: earningsDateFilter },
       { $group: { _id: null, total: { $sum: '$commissionEarned' } } }
     ]);
 
@@ -41,8 +47,8 @@ exports.getFinanceOverview = async (req, res) => {
     ]);
 
     // Top earning drivers (raw)
-    const topDriversRaw = await DriverEarnings.aggregate([
-      { $match: dateFilter },
+  const topDriversRaw = await DriverEarnings.aggregate([
+      { $match: earningsDateFilter },
       { $group: { _id: '$driverId', totalEarnings: { $sum: '$netEarnings' }, totalRides: { $sum: 1 } } },
       { $sort: { totalEarnings: -1 } },
       { $limit: 10 }
@@ -70,8 +76,8 @@ exports.getFinanceOverview = async (req, res) => {
       if (unresolved.length) {
         try {
           const { getDriversByIds } = require('../../integrations/userServiceClient');
-          const headers = req.headers && req.headers.authorization ? { Authorization: req.headers.authorization } : undefined;
-          const infos = await getDriversByIds(unresolved, { headers });
+          const token = req.headers && req.headers.authorization ? req.headers.authorization : undefined;
+          const infos = await getDriversByIds(unresolved, token);
           emap = Object.fromEntries((infos || []).map(i => [String(i.id), {
             name: i.name,
             phone: i.phone,

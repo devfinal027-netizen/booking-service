@@ -341,7 +341,8 @@ async function completeTrip(bookingId, endLocation, options = {}) {
       await DriverEarnings.create({
         driverId: String(booking.driverId),
         bookingId: booking._id,
-        tripDate: new Date(),
+        // Use the canonical completion time for all financial reports
+        tripDate: completedAt,
         grossFare: fare,
         commissionAmount: commission,
         netEarnings: driverEarnings,
@@ -350,7 +351,8 @@ async function completeTrip(bookingId, endLocation, options = {}) {
     }
     await AdminEarnings.create({
       bookingId: booking._id,
-      tripDate: new Date(),
+      // Use the canonical completion time for all financial reports
+      tripDate: completedAt,
       grossFare: fare,
       commissionEarned: commission,
       commissionPercentage: commissionRate,

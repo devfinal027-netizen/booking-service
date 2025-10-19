@@ -10,9 +10,10 @@ exports.getDailyReport = async (req, res) => {
     const nextDay = dayjs(targetDate).add(1, 'day').toDate();
     const commissionRate = Number(process.env.COMMISSION_RATE || 15);
 
-    const rides = await Booking.find({ createdAt: { $gte: targetDate, $lt: nextDay } }).populate('driverId passengerId');
-    const completed = rides.filter(r => r.status === 'completed');
-    const totalRevenue = completed.reduce((sum, r) => sum + Number(r.fareFinal || r.fareEstimated || 0), 0);
+    // Use completedAt for rides within period
+    const rides = await Booking.find({ completedAt: { $gte: targetDate, $lt: nextDay }, status: 'completed' }).populate('driverId passengerId');
+    const completed = rides; // already filtered
+    const totalRevenue = completed.reduce((sum, r) => sum + Number(r.fareFinal || 0), 0);
     const totalCommission = await AdminEarnings.aggregate([
       { $match: { tripDate: { $gte: targetDate, $lt: nextDay } } },
       { $group: { _id: null, total: { $sum: '$commissionEarned' } } }
@@ -35,7 +36,33 @@ exports.getDailyReport = async (req, res) => {
       distanceKm: Number(r.distanceKm || 0),
       _id: r._id
     }));
-    const { driverMap, passengerMap } = await buildUserMaps(rideDetailsRaw.map(x => x.driverId), rideDetailsRaw.map(x => x.passengerId));
+    let { driverMap, passengerMap } = await buildUserMaps(rideDetailsRaw.map(x => x.driverId), rideDetailsRaw.map(x => x.passengerId));
+    // Fallback enrich unresolved via external user service
+    try {
+      const unresolvedDriverIds = Array.from(new Set(rideDetailsRaw.map(x => x.driverId).filter(Boolean).map(String)))
+        .filter(id => !driverMap[id]);
+      if (unresolvedDriverIds.length) {
+        const { getDriversByIds } = require('../../integrations/userServiceClient');
+        const token = req.headers && req.headers.authorization ? req.headers.authorization : undefined;
+        const infos = await getDriversByIds(unresolvedDriverIds, token);
+        const emap = Object.fromEntries((infos || []).map(i => [String(i.id), {
+          id: String(i.id), name: i.name, phone: i.phone, email: i.email,
+          vehicleType: i.vehicleType, carName: i.carName, carModel: i.carModel, carPlate: i.carPlate, carColor: i.carColor
+        }]));
+        driverMap = { ...driverMap, ...emap };
+      }
+    } catch (_) {}
+    try {
+      const unresolvedPassengerIds = Array.from(new Set(rideDetailsRaw.map(x => x.passengerId).filter(Boolean).map(String)))
+        .filter(id => !passengerMap[id]);
+      if (unresolvedPassengerIds.length) {
+        const { getPassengerById } = require('../../integrations/userServiceClient');
+        const headers = req.headers && req.headers.authorization ? { headers: { Authorization: req.headers.authorization } } : {};
+        const results = await Promise.all(unresolvedPassengerIds.map(id => getPassengerById(id, headers).catch(() => null)));
+        const pmap = Object.fromEntries((results || []).filter(Boolean).map(u => [String(u.id), { id: String(u.id), name: u.name, phone: u.phone, email: u.email }]));
+        passengerMap = { ...passengerMap, ...pmap };
+      }
+    } catch (_) {}
     const rideDetails = rideDetailsRaw.map(x => ({
       ...x,
       driver: x.driverId ? (driverMap[String(x.driverId)] || { id: String(x.driverId) }) : undefined,
@@ -66,8 +93,8 @@ exports.getWeeklyReport = async (req, res) => {
     const endDate = dayjs(startDate).endOf('week').toDate();
     const commissionRate = Number(process.env.COMMISSION_RATE || 15);
 
-    const rides = await Booking.find({ createdAt: { $gte: startDate, $lte: endDate } }).populate('driverId passengerId').lean();
-    const completed = rides.filter(r => r.status === 'completed');
+    const rides = await Booking.find({ status: 'completed', completedAt: { $gte: startDate, $lte: endDate } }).populate('driverId passengerId').lean();
+    const completed = rides; // already filtered
     const totalRevenue = completed.reduce((sum, r) => sum + Number(r.fareFinal || 0), 0);
 
     const rideDetailsRaw = rides.map(r => ({
@@ -87,7 +114,33 @@ exports.getWeeklyReport = async (req, res) => {
       distanceKm: Number(r.distanceKm || 0),
       _id: r._id
     }));
-    const { driverMap, passengerMap } = await buildUserMaps(rideDetailsRaw.map(x => x.driverId), rideDetailsRaw.map(x => x.passengerId));
+    let { driverMap, passengerMap } = await buildUserMaps(rideDetailsRaw.map(x => x.driverId), rideDetailsRaw.map(x => x.passengerId));
+    // Fallback external enrich
+    try {
+      const unresolvedDriverIds = Array.from(new Set(rideDetailsRaw.map(x => x.driverId).filter(Boolean).map(String)))
+        .filter(id => !driverMap[id]);
+      if (unresolvedDriverIds.length) {
+        const { getDriversByIds } = require('../../integrations/userServiceClient');
+        const token = req.headers && req.headers.authorization ? req.headers.authorization : undefined;
+        const infos = await getDriversByIds(unresolvedDriverIds, token);
+        const emap = Object.fromEntries((infos || []).map(i => [String(i.id), {
+          id: String(i.id), name: i.name, phone: i.phone, email: i.email,
+          vehicleType: i.vehicleType, carName: i.carName, carModel: i.carModel, carPlate: i.carPlate, carColor: i.carColor
+        }]));
+        driverMap = { ...driverMap, ...emap };
+      }
+    } catch (_) {}
+    try {
+      const unresolvedPassengerIds = Array.from(new Set(rideDetailsRaw.map(x => x.passengerId).filter(Boolean).map(String)))
+        .filter(id => !passengerMap[id]);
+      if (unresolvedPassengerIds.length) {
+        const { getPassengerById } = require('../../integrations/userServiceClient');
+        const headers = req.headers && req.headers.authorization ? { headers: { Authorization: req.headers.authorization } } : {};
+        const results = await Promise.all(unresolvedPassengerIds.map(id => getPassengerById(id, headers).catch(() => null)));
+        const pmap = Object.fromEntries((results || []).filter(Boolean).map(u => [String(u.id), { id: String(u.id), name: u.name, phone: u.phone, email: u.email }]));
+        passengerMap = { ...passengerMap, ...pmap };
+      }
+    } catch (_) {}
     const rideDetails = rideDetailsRaw.map(x => ({
       ...x,
       driver: x.driverId ? (driverMap[String(x.driverId)] || { id: String(x.driverId) }) : undefined,
@@ -133,9 +186,9 @@ exports.getMonthlyReport = async (req, res) => {
     const endDate = dayjs().month(targetMonth - 1).year(targetYear).endOf('month').toDate();
     const commissionRate = Number(process.env.COMMISSION_RATE || 15);
 
-    const rides = await Booking.find({ createdAt: { $gte: startDate, $lte: endDate } }).populate('driverId passengerId').lean();
-    const completed = rides.filter(r => r.status === 'completed');
-    const totalRevenue = completed.reduce((sum, r) => sum + (r.fareFinal || r.fareEstimated || 0), 0);
+    const rides = await Booking.find({ status: 'completed', completedAt: { $gte: startDate, $lte: endDate } }).populate('driverId passengerId').lean();
+    const completed = rides; // already filtered
+    const totalRevenue = completed.reduce((sum, r) => sum + Number(r.fareFinal || 0), 0);
 
     const rideDetailsRaw = rides.map(r => ({
       bookingId: r._id,
@@ -154,7 +207,33 @@ exports.getMonthlyReport = async (req, res) => {
       distanceKm: Number(r.distanceKm || 0),
       _id: r._id
     }));
-    const { driverMap, passengerMap } = await buildUserMaps(rideDetailsRaw.map(x => x.driverId), rideDetailsRaw.map(x => x.passengerId));
+    let { driverMap, passengerMap } = await buildUserMaps(rideDetailsRaw.map(x => x.driverId), rideDetailsRaw.map(x => x.passengerId));
+    // Fallback external enrich
+    try {
+      const unresolvedDriverIds = Array.from(new Set(rideDetailsRaw.map(x => x.driverId).filter(Boolean).map(String)))
+        .filter(id => !driverMap[id]);
+      if (unresolvedDriverIds.length) {
+        const { getDriversByIds } = require('../../integrations/userServiceClient');
+        const token = req.headers && req.headers.authorization ? req.headers.authorization : undefined;
+        const infos = await getDriversByIds(unresolvedDriverIds, token);
+        const emap = Object.fromEntries((infos || []).map(i => [String(i.id), {
+          id: String(i.id), name: i.name, phone: i.phone, email: i.email,
+          vehicleType: i.vehicleType, carName: i.carName, carModel: i.carModel, carPlate: i.carPlate, carColor: i.carColor
+        }]));
+        driverMap = { ...driverMap, ...emap };
+      }
+    } catch (_) {}
+    try {
+      const unresolvedPassengerIds = Array.from(new Set(rideDetailsRaw.map(x => x.passengerId).filter(Boolean).map(String)))
+        .filter(id => !passengerMap[id]);
+      if (unresolvedPassengerIds.length) {
+        const { getPassengerById } = require('../../integrations/userServiceClient');
+        const headers = req.headers && req.headers.authorization ? { headers: { Authorization: req.headers.authorization } } : {};
+        const results = await Promise.all(unresolvedPassengerIds.map(id => getPassengerById(id, headers).catch(() => null)));
+        const pmap = Object.fromEntries((results || []).filter(Boolean).map(u => [String(u.id), { id: String(u.id), name: u.name, phone: u.phone, email: u.email }]));
+        passengerMap = { ...passengerMap, ...pmap };
+      }
+    } catch (_) {}
     const rideDetails = rideDetailsRaw.map(x => ({
       ...x,
       driver: x.driverId ? (driverMap[String(x.driverId)] || { id: String(x.driverId) }) : undefined,
