@@ -2,7 +2,26 @@ const { Booking } = require('../models/bookingModels');
 const TripHistory = require('../models/tripHistoryModel');
 const { Pricing } = require('../models/pricing');
 const { haversineKm } = require('../utils/distance');
-const { computePathDistance } = require('../utils/computePathDistance');
+// Defensive require: fall back to simple Haversine-based implementation if utility missing
+const { computePathDistance } = (() => {
+  try {
+    return require('../utils/computePathDistance');
+  } catch (_) {
+    return {
+      computePathDistance(points) {
+        if (!Array.isArray(points) || points.length < 2) return 0;
+        let total = 0;
+        for (let i = 1; i < points.length; i++) {
+          const a = points[i - 1];
+          const b = points[i];
+          const seg = haversineKm({ latitude: a.lat, longitude: a.lng }, { latitude: b.lat, longitude: b.lng });
+          if (Number.isFinite(seg)) total += seg;
+        }
+        return total;
+      }
+    };
+  }
+})();
 const pricingService = require('./pricingService');
 const commissionService = require('./commissionService');
 const walletService = require('./walletService');
@@ -56,10 +75,63 @@ async function startTrip(bookingId, startLocation) {
 }
 
 async function updateTripLocation(bookingId, driverId, location) {
-  const point = { lat: Number(location.latitude), lng: Number(location.longitude), timestamp: new Date() };
+  const now = new Date();
+  const lat = Number(location.latitude);
+  const lon = Number(location.longitude);
+  const point = { lat, lng: lon, lon, timestamp: now };
+
+  // Fetch last point and current aggregates with minimal payload
+  let lastPoint = null;
+  try {
+    const prev = await TripHistory.findOne({ bookingId })
+      .select({ locations: { $slice: -1 }, distanceAccumulatedKm: 1, movingMinutes: 1, waitingMinutes: 1 })
+      .lean();
+    if (prev && Array.isArray(prev.locations) && prev.locations.length) {
+      lastPoint = prev.locations[0];
+    }
+  } catch (_) {}
+
+  let incDistanceKm = 0;
+  let incMovingMinutes = 0;
+  let incWaitingMinutes = 0;
+  if (lastPoint) {
+    // Compute segment metrics with gating rules
+    const from = { latitude: Number(lastPoint.lat), longitude: Number(lastPoint.lng ?? lastPoint.lon) };
+    const to = { latitude: lat, longitude: lon };
+    const segKm = haversineKm(from, to);
+    const meters = Number.isFinite(segKm) ? segKm * 1000 : NaN;
+    const t1 = lastPoint.timestamp ? new Date(lastPoint.timestamp).getTime() : undefined;
+    const t2 = now.getTime();
+    const dtSec = Number.isFinite(t1) ? Math.max(0, (t2 - t1) / 1000) : undefined;
+    const minMeters = Number(process.env.DIST_MIN_METERS || 25);
+    const minDt = Number(process.env.DIST_MIN_DT_SECONDS || 5);
+    const minSpeed = Number(process.env.DIST_MIN_SPEED_MPS || 1);
+    const speed = dtSec && dtSec > 0 ? meters / dtSec : undefined;
+    const passesDist = Number.isFinite(meters) && meters >= minMeters;
+    const passesTime = dtSec == null || dtSec >= minDt;
+    const passesSpeed = speed == null || speed >= minSpeed;
+    if (passesDist && passesTime && passesSpeed && Number.isFinite(segKm)) {
+      incDistanceKm = segKm;
+      if (dtSec) incMovingMinutes = dtSec / 60;
+    } else if (dtSec) {
+      incWaitingMinutes = dtSec / 60;
+    }
+  }
+
+  const updateDoc = {
+    $push: { locations: point },
+    $set: { status: 'ongoing', driverId },
+    $setOnInsert: { startedAt: now },
+  };
+  const inc = {};
+  if (incDistanceKm) inc.distanceAccumulatedKm = incDistanceKm;
+  if (incMovingMinutes) inc.movingMinutes = incMovingMinutes;
+  if (incWaitingMinutes) inc.waitingMinutes = incWaitingMinutes;
+  if (Object.keys(inc).length) updateDoc.$inc = inc;
+
   await TripHistory.findOneAndUpdate(
     { bookingId },
-    { $push: { locations: point } },
+    updateDoc,
     { upsert: true }
   );
   return point;
