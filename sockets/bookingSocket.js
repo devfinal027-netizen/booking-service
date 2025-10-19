@@ -508,6 +508,7 @@ module.exports = (io, socket) => {
       if (!booking.dropoff || booking.dropoff.latitude == null || booking.dropoff.longitude == null) {
         try { logger.warn('[trip:ongoing] dropoff missing; ETA will be skipped', { bookingId }); } catch (_) {}
       }
+      // Redirect to unified persist function
       const point = await lifecycle.updateTripLocation(bookingId, String(socket.user.id), location);
       bookingEvents.emitTripOngoing({ _id: booking._id, driverId: booking.driverId, passengerId: booking.passengerId }, point);
       try { logger.info('[socket->room] trip:ongoing', { bookingId, lat: point.lat, lon: point.lng }); } catch (_) {}

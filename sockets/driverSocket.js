@@ -618,6 +618,19 @@ try {
             }
           }
 
+          // Unify event handling: also persist to TripHistory.locations for active bookings
+          try {
+            const lifecycle = require('../services/bookingLifecycleService');
+            const persistOps = activeBookings.map((booking) =>
+              lifecycle.updateTripLocation(String(booking._id), driverDbId, { latitude: data.latitude, longitude: data.longitude })
+            );
+            if (persistOps.length) {
+              await Promise.allSettled(persistOps);
+            }
+          } catch (persistErr) {
+            try { logger.warn('[socket->driver] trip history persist failed', { error: persistErr && persistErr.message }); } catch (_) {}
+          }
+
           for (const payloadEntry of payloads) {
             emitBookingTargets(
               {
