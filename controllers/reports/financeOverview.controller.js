@@ -106,7 +106,7 @@ exports.getFinanceOverview = async (req, res) => {
 
     // Most profitable routes (by distance)
     const profitableRoutes = await Booking.aggregate([
-      { $match: { status: 'completed', ...dateFilter } },
+      { $match: { status: 'completed', ...bookingDateFilter } },
       { $group: {
         _id: {
           pickupLat: { $round: ['$pickup.latitude', 2] },

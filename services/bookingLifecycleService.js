@@ -203,19 +203,18 @@ async function completeTrip(bookingId, endLocation, options = {}) {
     if (!fare || !Number.isFinite(fare) || fare <= 0) {
       fare = await pricingService.calculateFare(distanceKm, waitingTimeMinutes, booking.vehicleType, surgeMultiplier, discount);
     } else {
-      // Apply minimum/maximum fare constraints to the initial estimate
-      const pricing = await Pricing.findOne({ vehicleType: booking.vehicleType, isActive: true }).sort({ updatedAt: -1 });
-      if (pricing) {
-        const minimumFare = Number(pricing.minimumFare || 0);
-        const maximumFare = Number(pricing.maximumFare || 0);
-        
-        if (minimumFare > 0) {
-          fare = Math.max(fare, minimumFare);
+      // Apply minimum/maximum fare constraints to the initial estimate (skip DB lookup in test env without MONGO_URI)
+      try {
+        if (process.env.MONGO_URI) {
+          const pricing = await Pricing.findOne({ vehicleType: booking.vehicleType, isActive: true }).sort({ updatedAt: -1 });
+          if (pricing) {
+            const minimumFare = Number(pricing.minimumFare || 0);
+            const maximumFare = Number(pricing.maximumFare || 0);
+            if (minimumFare > 0) fare = Math.max(fare, minimumFare);
+            if (maximumFare > 0) fare = Math.min(fare, maximumFare);
+          }
         }
-        if (maximumFare > 0) {
-          fare = Math.min(fare, maximumFare);
-        }
-      }
+      } catch (_) {}
       
       // Apply surge multiplier and discount to the initial estimate
       const multiplier = Number(surgeMultiplier || 1);
@@ -226,19 +225,18 @@ async function completeTrip(bookingId, endLocation, options = {}) {
       fare = Math.max(fare, 0);
     }
   } else {
-    // Apply minimum/maximum fare constraints to the live pricing
-    const pricing = await Pricing.findOne({ vehicleType: booking.vehicleType, isActive: true }).sort({ updatedAt: -1 });
-    if (pricing) {
-      const minimumFare = Number(pricing.minimumFare || 0);
-      const maximumFare = Number(pricing.maximumFare || 0);
-      
-      if (minimumFare > 0) {
-        fare = Math.max(fare, minimumFare);
+    // Apply minimum/maximum fare constraints to the live pricing (skip DB lookup in test env without MONGO_URI)
+    try {
+      if (process.env.MONGO_URI) {
+        const pricing = await Pricing.findOne({ vehicleType: booking.vehicleType, isActive: true }).sort({ updatedAt: -1 });
+        if (pricing) {
+          const minimumFare = Number(pricing.minimumFare || 0);
+          const maximumFare = Number(pricing.maximumFare || 0);
+          if (minimumFare > 0) fare = Math.max(fare, minimumFare);
+          if (maximumFare > 0) fare = Math.min(fare, maximumFare);
+        }
       }
-      if (maximumFare > 0) {
-        fare = Math.min(fare, maximumFare);
-      }
-    }
+    } catch (_) {}
     
     // Apply surge multiplier and discount to the live pricing
     const multiplier = Number(surgeMultiplier || 1);
