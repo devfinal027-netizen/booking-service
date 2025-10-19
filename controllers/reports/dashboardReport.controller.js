@@ -6,9 +6,11 @@ const { Payout, AdminEarnings } = require('../../models/commission');
 
 exports.getDashboardStats = async (req, res) => {
   try {
-    const today = dayjs().startOf('day').toDate();
-    const thisWeek = dayjs().startOf('week').toDate();
-    const thisMonth = dayjs().startOf('month').toDate();
+    const useUtc = process.env.REPORTS_USE_UTC === '1';
+    const d = useUtc && dayjs.utc ? dayjs.utc : dayjs;
+    const today = d().startOf('day').toDate();
+    const thisWeek = d().startOf('week').toDate();
+    const thisMonth = d().startOf('month').toDate();
 
     // Total counts
     const totalRides = await Booking.countDocuments();

@@ -1,13 +1,12 @@
 const dayjs = require('dayjs');
 const { Booking } = require('../../models/bookingModels');
 const { AdminEarnings, DriverEarnings } = require('../../models/commission');
-const { buildUserMaps } = require('./_utils');
+const { buildUserMaps, buildTimeRange } = require('./_utils');
 
 exports.getDailyReport = async (req, res) => {
   try {
     const { date } = req.query;
-    const targetDate = date ? dayjs(date).startOf('day').toDate() : dayjs().startOf('day').toDate();
-    const nextDay = dayjs(targetDate).add(1, 'day').toDate();
+    const { start: targetDate, end: nextDay } = buildTimeRange('daily', { date });
     const commissionRate = Number(process.env.COMMISSION_RATE || 15);
 
     // Use completedAt for rides within period
@@ -89,11 +88,10 @@ exports.getDailyReport = async (req, res) => {
 exports.getWeeklyReport = async (req, res) => {
   try {
     const { weekStart } = req.query;
-    const startDate = weekStart ? dayjs(weekStart).startOf('week').toDate() : dayjs().startOf('week').toDate();
-    const endDate = dayjs(startDate).endOf('week').toDate();
+    const { start: startDate, end: endDate, inclusiveEnd } = buildTimeRange('weekly', { weekStart });
     const commissionRate = Number(process.env.COMMISSION_RATE || 15);
 
-    const rides = await Booking.find({ status: 'completed', completedAt: { $gte: startDate, $lte: endDate } }).populate('driverId passengerId').lean();
+    const rides = await Booking.find({ status: 'completed', completedAt: inclusiveEnd ? { $gte: startDate, $lte: endDate } : { $gte: startDate, $lt: endDate } }).populate('driverId passengerId').lean();
     const completed = rides; // already filtered
     const totalRevenue = completed.reduce((sum, r) => sum + Number(r.fareFinal || 0), 0);
 
@@ -148,7 +146,7 @@ exports.getWeeklyReport = async (req, res) => {
     }));
 
     const topDriversAgg = await DriverEarnings.aggregate([
-      { $match: { tripDate: { $gte: startDate, $lte: endDate } } },
+      { $match: { tripDate: inclusiveEnd ? { $gte: startDate, $lte: endDate } : { $gte: startDate, $lt: endDate } } },
       { $group: { _id: '$driverId', rides: { $sum: 1 }, gross: { $sum: '$grossFare' }, commission: { $sum: '$commissionAmount' }, net: { $sum: '$netEarnings' } } },
       { $sort: { net: -1 } },
       { $limit: 10 }
@@ -163,7 +161,7 @@ exports.getWeeklyReport = async (req, res) => {
       totalRevenue,
       totalCommission: await (async () => {
         const adminAgg = await AdminEarnings.aggregate([
-          { $match: { tripDate: { $gte: startDate, $lte: endDate } } },
+          { $match: { tripDate: inclusiveEnd ? { $gte: startDate, $lte: endDate } : { $gte: startDate, $lt: endDate } } },
           { $group: { _id: null, total: { $sum: '$commissionEarned' } } }
         ]);
         return adminAgg[0]?.total || 0;
@@ -180,13 +178,10 @@ exports.getWeeklyReport = async (req, res) => {
 exports.getMonthlyReport = async (req, res) => {
   try {
     const { month, year } = req.query;
-    const targetMonth = month ? parseInt(month) : dayjs().month() + 1;
-    const targetYear = year ? parseInt(year) : dayjs().year();
-    const startDate = dayjs().month(targetMonth - 1).year(targetYear).startOf('month').toDate();
-    const endDate = dayjs().month(targetMonth - 1).year(targetYear).endOf('month').toDate();
+    const { start: startDate, end: endDate, inclusiveEnd } = buildTimeRange('monthly', { month, year });
     const commissionRate = Number(process.env.COMMISSION_RATE || 15);
 
-    const rides = await Booking.find({ status: 'completed', completedAt: { $gte: startDate, $lte: endDate } }).populate('driverId passengerId').lean();
+    const rides = await Booking.find({ status: 'completed', completedAt: inclusiveEnd ? { $gte: startDate, $lte: endDate } : { $gte: startDate, $lt: endDate } }).populate('driverId passengerId').lean();
     const completed = rides; // already filtered
     const totalRevenue = completed.reduce((sum, r) => sum + Number(r.fareFinal || 0), 0);
 
