@@ -620,12 +620,20 @@ try {
 
           // Unify event handling: also persist to TripHistory.locations for active bookings
           try {
-            const lifecycle = require('../services/bookingLifecycleService');
-            const persistOps = activeBookings.map((booking) =>
-              lifecycle.updateTripLocation(String(booking._id), driverDbId, { latitude: data.latitude, longitude: data.longitude })
-            );
-            if (persistOps.length) {
-              await Promise.allSettled(persistOps);
+            const lifecycleMod = require('../services/bookingLifecycleService');
+            const lifecycle = lifecycleMod && (lifecycleMod.updateTripLocation || lifecycleMod.completeTrip || lifecycleMod.startTrip)
+              ? lifecycleMod
+              : (lifecycleMod && lifecycleMod.default ? lifecycleMod.default : lifecycleMod);
+            try { logger.info('[diag] lifecycle module loaded from', require.resolve('../services/bookingLifecycleService')); } catch (_) {}
+            if (lifecycle && typeof lifecycle.updateTripLocation === 'function') {
+              const persistOps = activeBookings.map((booking) =>
+                lifecycle.updateTripLocation(String(booking._id), driverDbId, { latitude: data.latitude, longitude: data.longitude })
+              );
+              if (persistOps.length) {
+                await Promise.allSettled(persistOps);
+              }
+            } else {
+              try { logger.warn('[socket->driver] lifecycle.updateTripLocation unavailable'); } catch (_) {}
             }
           } catch (persistErr) {
             try { logger.warn('[socket->driver] trip history persist failed', { error: persistErr && persistErr.message }); } catch (_) {}
@@ -644,13 +652,14 @@ try {
             );
           }
 
-          // Trigger ETA broadcast only for ongoing trips (guarded inside service as well)
+          // Trigger ETA broadcast for accepted and ongoing trips (guarded inside service as well)
           try {
             const { calculateAndBroadcastEta } = require('../services/bookingPricingService');
             const { getIo } = require('./utils');
             const ioRef = getIo && getIo();
             for (const booking of activeBookings) {
-              if (String(booking.status || '').toLowerCase() !== 'ongoing') continue;
+              const st = String(booking.status || '').toLowerCase();
+              if (st !== 'ongoing' && st !== 'accepted') continue;
               await calculateAndBroadcastEta({ booking, driverLocation: { latitude: data.latitude, longitude: data.longitude }, io: ioRef, vehicleTypeOverride: socket.user && socket.user.vehicleType });
             }
           } catch (_) {}
