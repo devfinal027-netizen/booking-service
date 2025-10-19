@@ -1,4 +1,8 @@
 const { haversineKm } = require('./distance');
+let logger;
+let metrics;
+try { logger = require('./logger'); } catch (_) { logger = console; }
+try { metrics = require('./metrics'); } catch (_) { metrics = null; }
 
 function isFiniteNumber(n) {
   return typeof n === 'number' && Number.isFinite(n);
@@ -101,6 +105,7 @@ function computePathDistance(points, options = {}) {
   let rejectedByDistance = 0;
   let rejectedByTime = 0;
   let rejectedBySpeed = 0;
+  let acceptedBuckets = 0;
 
   for (let i = 1; i < series.length; i++) {
     const a = series[i - 1];
@@ -127,6 +132,7 @@ function computePathDistance(points, options = {}) {
       totalMeters += bucketMeters;
       bucketMeters = 0;
       bucketDtSec = 0;
+      acceptedBuckets++;
     } else if (debug) {
       if (!passesSpeed) rejectedBySpeed++;
       if (!passesDistance) rejectedByDistance++;
@@ -134,10 +140,16 @@ function computePathDistance(points, options = {}) {
     }
   }
 
-  if (debug && typeof console !== 'undefined') {
+  if (debug && logger && typeof logger.info === 'function') {
+    try { logger.info('[distance] debug', { rejectedByDistance, rejectedByTime, rejectedBySpeed, acceptedBuckets, totalMeters }); } catch (_) {}
+  }
+
+  if (process.env.DIST_METRICS === '1' && metrics && typeof metrics.increment === 'function') {
     try {
-      // eslint-disable-next-line no-console
-      console.log('[distance] debug', { rejectedByDistance, rejectedByTime, rejectedBySpeed });
+      metrics.increment('distance.compute.invocations', 1, { source: 'computePathDistance' });
+      if (acceptedBuckets) metrics.increment('distance.bucket.accept', acceptedBuckets, { source: 'computePathDistance' });
+      const totalRejected = rejectedByDistance + rejectedByTime + rejectedBySpeed;
+      if (totalRejected) metrics.increment('distance.bucket.reject', totalRejected, { source: 'computePathDistance' });
     } catch (_) {}
   }
   const totalKm = totalMeters / 1000;

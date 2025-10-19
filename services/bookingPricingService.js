@@ -368,6 +368,12 @@ async function calculateLivePricing(bookingId, currentLocation) {
       metrics.timing('pricing.live_calculation_ms', Date.now() - startedAt, {
         vehicleType: booking.vehicleType || 'unknown'
       });
+      metrics.increment('distance.pricing_updates', 1, {
+        vehicleType: booking.vehicleType || 'unknown'
+      });
+      metrics.timing('distance.pricing_compute_ms', Date.now() - startedAt, {
+        vehicleType: booking.vehicleType || 'unknown'
+      });
     } catch (_) {}
 
     return result;
