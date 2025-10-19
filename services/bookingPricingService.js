@@ -176,13 +176,24 @@ async function calculateLivePricing(bookingId, currentLocation) {
     let distanceTraveled = 0;
     let movingMinutes = 0;
     let waitingMinutes = 0;
-    if (locations.length >= 2) {
+    if (locations.length >= 1) {
+      // Include currentLocation as the latest point if newer to avoid lag (not persisted here)
+      const augmented = [...locations];
+      if (currentLocation && Number.isFinite(currentLocation.latitude) && Number.isFinite(currentLocation.longitude)) {
+        const last = locations[locations.length - 1];
+        const lastTs = last && last.timestamp ? new Date(last.timestamp).getTime() : 0;
+        const nowTs = Date.now();
+        // Only append if it's logically newer or timestamps are missing
+        if (!lastTs || nowTs >= lastTs) {
+          augmented.push({ lat: Number(currentLocation.latitude), lng: Number(currentLocation.longitude), timestamp: new Date() });
+        }
+      }
       // Use centralized distance computation for consistency
-      distanceTraveled = computePathDistance(locations);
+      distanceTraveled = computePathDistance(augmented);
       // Estimate moving/waiting minutes using the same gates as before
-      for (let i = 1; i < locations.length; i++) {
-        const a = locations[i - 1];
-        const b = locations[i];
+      for (let i = 1; i < augmented.length; i++) {
+        const a = augmented[i - 1];
+        const b = augmented[i];
         const segmentKm = geolib.getDistance(
           { latitude: a.lat, longitude: a.lng },
           { latitude: b.lat, longitude: b.lng }

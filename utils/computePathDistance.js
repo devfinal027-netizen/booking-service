@@ -38,7 +38,17 @@ function computePathDistance(points, options = {}) {
   const normalized = points.map(normalizePoint).filter(Boolean);
   if (normalized.length < 2) return 0;
 
+  // Bucketed gating: accumulate until either distance or time threshold is reached
   let totalMeters = 0;
+  let bucketMeters = 0;
+  let bucketDtSec = 0;
+
+  // Diagnostics counters (optional): enable via DIST_DEBUG=1
+  const debug = process.env.DIST_DEBUG === '1' || options.debug;
+  let rejectedByDistance = 0;
+  let rejectedByTime = 0;
+  let rejectedBySpeed = 0;
+
   for (let i = 1; i < normalized.length; i++) {
     const a = normalized[i - 1];
     const b = normalized[i];
@@ -53,13 +63,28 @@ function computePathDistance(points, options = {}) {
     }
     const speedMps = dtSec && dtSec > 0 ? meters / dtSec : undefined;
 
-    const passesDistance = meters >= minDistanceMeters;
-    const passesTime = dtSec == null || dtSec >= minDtSeconds; // tolerate missing timestamps
+    bucketMeters += meters;
+    bucketDtSec += dtSec || 0;
+    const passesDistance = bucketMeters >= minDistanceMeters;
+    const passesTime = bucketDtSec >= minDtSeconds; // allow accumulation
     const passesSpeed = speedMps == null || speedMps >= minSpeedMps; // tolerate missing timestamps
 
-    if (passesDistance && passesTime && passesSpeed) {
-      totalMeters += meters;
+    if (passesSpeed && (passesDistance || passesTime)) {
+      totalMeters += bucketMeters;
+      bucketMeters = 0;
+      bucketDtSec = 0;
+    } else if (debug) {
+      if (!passesSpeed) rejectedBySpeed++;
+      if (!passesDistance) rejectedByDistance++;
+      if (!passesTime) rejectedByTime++;
     }
+  }
+
+  if (debug && typeof console !== 'undefined') {
+    try {
+      // eslint-disable-next-line no-console
+      console.log('[distance] debug', { rejectedByDistance, rejectedByTime, rejectedBySpeed });
+    } catch (_) {}
   }
   const totalKm = totalMeters / 1000;
   return Math.round(totalKm * 1000_000) / 1000_000; // micro-km precision
