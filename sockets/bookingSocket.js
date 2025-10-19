@@ -572,12 +572,7 @@ module.exports = (io, socket) => {
         emitSocketError(socket, 'booking_error', 'NOT_FOUND', 'Booking not found or not assigned to you', { source: 'trip:completed', extras: { bookingId } });
         return;
       }
-    // Defensive require in some environments where CJS default export is used
-    const lifecycleMod = require('../services/bookingLifecycleService');
-    const lifecycleSvc = lifecycleMod && (lifecycleMod.completeTrip || lifecycleMod.updateTripLocation || lifecycleMod.startTrip)
-      ? lifecycleMod
-      : (lifecycleMod && lifecycleMod.default ? lifecycleMod.default : lifecycleMod);
-    const updated = await lifecycleSvc.completeTrip(bookingId, endLocation, { surgeMultiplier, discount, debitPassengerWallet });
+    const updated = await lifecycle.completeTrip(bookingId, endLocation, { surgeMultiplier, discount, debitPassengerWallet });
     bookingEvents.emitTripCompleted(updated);
     // Stop ETA updates and signal ended
     try {
