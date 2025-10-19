@@ -27,9 +27,9 @@ function normalizePoint(p) {
  *  - minSpeedMps (default 1)
  */
 function computePathDistance(points, options = {}) {
-  const minDistanceMeters = Number(process.env.DIST_MIN_METERS || options.minDistanceMeters || 25);
-  const minDtSeconds = Number(process.env.DIST_MIN_DT_SECONDS || options.minDtSeconds || 5);
-  const minSpeedMps = Number(process.env.DIST_MIN_SPEED_MPS || options.minSpeedMps || 1);
+  const minDistanceMeters = Number(process.env.DIST_MIN_METERS || options.minDistanceMeters || 10);
+  const minDtSeconds = Number(process.env.DIST_MIN_DT_SECONDS || options.minDtSeconds || 2);
+  const minSpeedMps = Number(process.env.DIST_MIN_SPEED_MPS || options.minSpeedMps || 0.3);
   const distanceFn = typeof options.distanceFn === 'function'
     ? options.distanceFn // must return meters
     : (a, b) => haversineKm(a, b) * 1000; // fallback uses haversine and converts to meters
@@ -67,7 +67,8 @@ function computePathDistance(points, options = {}) {
     bucketDtSec += dtSec || 0;
     const passesDistance = bucketMeters >= minDistanceMeters;
     const passesTime = bucketDtSec >= minDtSeconds; // allow accumulation
-    const passesSpeed = speedMps == null || speedMps >= minSpeedMps; // tolerate missing timestamps
+    const bucketSpeedMps = bucketDtSec > 0 ? bucketMeters / bucketDtSec : undefined;
+    const passesSpeed = bucketSpeedMps == null || bucketSpeedMps >= minSpeedMps; // use bucket average speed
 
     if (passesSpeed && (passesDistance || passesTime)) {
       totalMeters += bucketMeters;

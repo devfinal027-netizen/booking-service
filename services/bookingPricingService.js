@@ -188,8 +188,12 @@ async function calculateLivePricing(bookingId, currentLocation) {
           augmented.push({ lat: Number(currentLocation.latitude), lng: Number(currentLocation.longitude), timestamp: new Date() });
         }
       }
-      // Use centralized distance computation for consistency
-      distanceTraveled = computePathDistance(augmented);
+      // Use centralized distance computation for consistency (relaxed thresholds for live pricing)
+      distanceTraveled = computePathDistance(augmented, {
+        minDistanceMeters: Number(process.env.PRICE_DIST_MIN_METERS || 8),
+        minDtSeconds: Number(process.env.PRICE_DIST_MIN_DT_SECONDS || 1),
+        minSpeedMps: Number(process.env.PRICE_DIST_MIN_SPEED_MPS || 0.2),
+      });
       // Estimate moving/waiting minutes using the same gates as before
       for (let i = 1; i < augmented.length; i++) {
         const a = augmented[i - 1];

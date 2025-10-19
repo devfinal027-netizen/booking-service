@@ -103,9 +103,9 @@ async function updateTripLocation(bookingId, driverId, location) {
     const t1 = lastPoint.timestamp ? new Date(lastPoint.timestamp).getTime() : undefined;
     const t2 = now.getTime();
     const dtSec = Number.isFinite(t1) ? Math.max(0, (t2 - t1) / 1000) : undefined;
-    const minMeters = Number(process.env.DIST_MIN_METERS || 25);
-    const minDt = Number(process.env.DIST_MIN_DT_SECONDS || 5);
-    const minSpeed = Number(process.env.DIST_MIN_SPEED_MPS || 1);
+    const minMeters = Number(process.env.DIST_MIN_METERS || 10);
+    const minDt = Number(process.env.DIST_MIN_DT_SECONDS || 2);
+    const minSpeed = Number(process.env.DIST_MIN_SPEED_MPS || 0.3);
     const speed = dtSec && dtSec > 0 ? meters / dtSec : undefined;
     const passesDist = Number.isFinite(meters) && meters >= minMeters;
     const passesTime = dtSec == null || dtSec >= minDt;
