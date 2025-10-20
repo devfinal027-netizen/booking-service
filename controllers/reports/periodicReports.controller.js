@@ -250,6 +250,50 @@ exports.getMonthlyReport = async (req, res) => {
       { $group: { _id: null, total: { $sum: '$commissionEarned' } } }
     ]);
 
+    // Get top earning drivers for the month
+    const topDriversAgg = await DriverEarnings.aggregate([
+      { $match: { tripDate: { $gte: startDate, $lte: endDate } } },
+      { $group: { _id: '$driverId', rides: { $sum: 1 }, gross: { $sum: '$grossFare' }, commission: { $sum: '$commissionAmount' }, net: { $sum: '$netEarnings' } } },
+      { $sort: { net: -1 } },
+      { $limit: 10 }
+    ]);
+
+    // Enrich top drivers with driver information
+    let topDriversEnriched = [];
+    if (topDriversAgg.length > 0) {
+      const driverIds = topDriversAgg.map(d => String(d._id));
+      let { driverMap } = await buildUserMaps(driverIds, []);
+      
+      // Fallback to external service for unresolved drivers
+      try {
+        const unresolvedDriverIds = driverIds.filter(id => !driverMap[id]);
+        if (unresolvedDriverIds.length) {
+          const { getDriversByIds } = require('../../integrations/userServiceClient');
+          const token = req.headers && req.headers.authorization ? req.headers.authorization : undefined;
+          const infos = await getDriversByIds(unresolvedDriverIds, token);
+          const emap = Object.fromEntries((infos || []).map(i => [String(i.id), {
+            id: String(i.id), name: i.name, phone: i.phone, email: i.email,
+            vehicleType: i.vehicleType, carName: i.carName, carModel: i.carModel, carPlate: i.carPlate, carColor: i.carColor
+          }]));
+          driverMap = { ...driverMap, ...emap };
+        }
+      } catch (_) {}
+
+      topDriversEnriched = topDriversAgg.map(driver => {
+        const driverInfo = driverMap[String(driver._id)] || { id: String(driver._id) };
+        return {
+          driverId: String(driver._id),
+          name: driverInfo.name || `Driver ${driver._id}`,
+          phone: driverInfo.phone || 'N/A',
+          email: driverInfo.email || 'N/A',
+          rides: driver.rides,
+          grossEarnings: Number(driver.gross || 0),
+          commission: Number(driver.commission || 0),
+          netEarnings: Number(driver.net || 0)
+        };
+      });
+    }
+
     res.json({
       month: Number(m || (new Date(startDate).getMonth() + 1)),
       year: Number(y || new Date(startDate).getFullYear()),
@@ -259,6 +303,7 @@ exports.getMonthlyReport = async (req, res) => {
       completedRides: completed.length,
       canceledRides: rides.filter(r => r.status === 'canceled').length,
       averageFare: completed.length > 0 ? totalRevenue / completed.length : 0,
+      topDrivers: topDriversEnriched,
       rideDetails
     });
   } catch (e) {
