@@ -157,8 +157,14 @@ exports.adminListWallets = async (req, res) => {
     // Ensure totalEarnings exists and embed driver fields directly in wallet objects
     let itemsOut = [];
     try {
-      // Precompute credits per driver for backfilling totals
+      // Prefer net earnings from DriverEarnings; fallback to credits
       const driverIds = enriched.map(w => String(w.userId));
+      const { DriverEarnings } = require('../models/commission');
+      const netAgg = await DriverEarnings.aggregate([
+        { $match: { driverId: { $in: driverIds } } },
+        { $group: { _id: '$driverId', total: { $sum: '$netEarnings' } } }
+      ]);
+      const netMap = Object.fromEntries(netAgg.map(r => [String(r._id), Number(r.total || 0)]));
       const creditAgg = await Transaction.aggregate([
         { $match: { userId: { $in: driverIds }, role: 'driver', type: 'credit', status: 'success' } },
         { $group: { _id: '$userId', total: { $sum: '$amount' } } }
@@ -168,9 +174,11 @@ exports.adminListWallets = async (req, res) => {
       itemsOut = enriched.map(w => {
         const { user, ...rest } = w;
         let out = { ...rest };
-        if (!Number.isFinite(Number(out.totalEarnings))) {
-          out.totalEarnings = creditsMap[String(out.userId)] || 0;
+        let total = netMap[String(out.userId)];
+        if (!Number.isFinite(Number(total)) || total <= 0) {
+          total = creditsMap[String(out.userId)] || 0;
         }
+        out.totalEarnings = Number(total || 0);
         const d = user || {};
         out = { ...out, id: d.id || String(out.userId) };
         if (d.name) out.name = d.name;
@@ -219,18 +227,27 @@ exports.adminGetDriverWallet = async (req, res) => {
       } catch (_) {}
     }
 
-    // Ensure wallet.totalEarnings is present; if missing, backfill from successful driver credit transactions
+    // Ensure wallet.totalEarnings reflects actual earnings (prefer DriverEarnings.netEarnings; fallback to credits)
     let walletOut = wallet || { userId: driverId, role: 'driver', balance: 0, currency: 'ETB' };
-    if (!Number.isFinite(Number(walletOut.totalEarnings))) {
-      try {
-        const agg = await Transaction.aggregate([
+    try {
+      // Net earnings from completed trips
+      const { DriverEarnings } = require('../models/commission');
+      const netAgg = await DriverEarnings.aggregate([
+        { $match: { driverId: driverId } },
+        { $group: { _id: null, total: { $sum: '$netEarnings' } } }
+      ]);
+      const netTotal = Number(netAgg[0]?.total || 0);
+      let total = netTotal;
+      if (!Number.isFinite(total) || total <= 0) {
+        const creditAgg = await Transaction.aggregate([
           { $match: { userId: driverId, role: 'driver', type: 'credit', status: 'success' } },
           { $group: { _id: null, total: { $sum: '$amount' } } }
         ]);
-        walletOut = { ...walletOut, totalEarnings: Number(agg[0]?.total || 0) };
-      } catch (_) {
-        walletOut = { ...walletOut, totalEarnings: 0 };
+        total = Number(creditAgg[0]?.total || 0);
       }
+      walletOut = { ...walletOut, totalEarnings: Number(total || 0) };
+    } catch (_) {
+      if (!Number.isFinite(Number(walletOut.totalEarnings))) walletOut = { ...walletOut, totalEarnings: 0 };
     }
 
     const walletWithDriver = {
