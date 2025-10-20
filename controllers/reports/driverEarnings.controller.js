@@ -1,6 +1,5 @@
 const dayjs = require('dayjs');
 const { DriverEarnings } = require('../../models/commission');
-const { buildUserMaps } = require('./_utils');
 
 exports.getDriverEarnings = async (req, res) => {
   try {
@@ -74,54 +73,7 @@ exports.getDriverEarnings = async (req, res) => {
       walletBalance = wallet ? wallet.balance : 0;
     } catch (_) {}
 
-    // Enrich driver and passenger info where IDs exist
-    let driverInfo = undefined;
-    try {
-      const { Driver } = require('../../models/userModels');
-      const { Types } = require('mongoose');
-      if (Types.ObjectId.isValid(String(driverIdFilter))) {
-        const d = await Driver.findById(String(driverIdFilter)).select({ _id: 1, name: 1, phone: 1, email: 1, vehicleType: 1, carPlate: 1 }).lean();
-        if (d) driverInfo = { id: String(d._id), name: d.name, phone: d.phone, email: d.email, vehicleType: d.vehicleType, carPlate: d.carPlate };
-      }
-    } catch (_) {}
-    if (!driverInfo) {
-      try {
-        const { getDriverById } = require('../../integrations/userServiceClient');
-        const headers = req.headers && req.headers.authorization ? { headers: { Authorization: req.headers.authorization } } : undefined;
-        const info = await getDriverById(String(driverIdFilter), headers || {});
-        if (info) driverInfo = { id: String(info.id), name: info.name, phone: info.phone, email: info.email, vehicleType: info.vehicleType, carPlate: info.carPlate };
-      } catch (_) {}
-    }
-
-    const passengerIds = Array.from(new Set((earnings || [])
-      .map(e => e.bookingId && e.bookingId.passengerId)
-      .filter(Boolean)
-      .map(String)));
-    let passengerMap = {};
-    try {
-      const maps = await buildUserMaps([], passengerIds);
-      passengerMap = maps.passengerMap || {};
-    } catch (_) {}
-    // External fallback for unresolved passengers
-    try {
-      const unresolved = passengerIds.filter(id => !passengerMap[id]);
-      if (unresolved.length) {
-        const { getPassengerById } = require('../../integrations/userServiceClient');
-        const headers = req.headers && req.headers.authorization ? { headers: { Authorization: req.headers.authorization } } : {};
-        const results = await Promise.all(unresolved.map(id => getPassengerById(id, headers).catch(() => null)));
-        const pmap = Object.fromEntries((results || []).filter(Boolean).map(u => [String(u.id), { id: String(u.id), name: u.name, phone: u.phone, email: u.email }]));
-        passengerMap = { ...passengerMap, ...pmap };
-      }
-    } catch (_) {}
-
-    const enrichedEarnings = (earnings || []).map(e => ({
-      ...e.toObject(),
-      driver: driverInfo ? { ...driverInfo } : undefined,
-      passenger: e.bookingId && e.bookingId.passengerId ? (passengerMap[String(e.bookingId.passengerId)] || { id: String(e.bookingId.passengerId) }) : undefined
-    }));
-
     res.json({
-      driver: driverInfo,
       summary: summary[0] || {
         totalRides: 0,
         totalFareCollected: 0,
@@ -129,7 +81,7 @@ exports.getDriverEarnings = async (req, res) => {
         netEarnings: 0
       },
       wallet: { balance: walletBalance },
-      earnings: enrichedEarnings
+      earnings
     });
   } catch (e) {
     res.status(500).json({ message: `Failed to get driver earnings: ${e.message}` });

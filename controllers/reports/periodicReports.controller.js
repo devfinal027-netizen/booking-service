@@ -152,30 +152,6 @@ exports.getWeeklyReport = async (req, res) => {
       { $limit: 10 }
     ]);
 
-    // Enrich topDrivers with driver details from local DB or external service
-    let topDrivers = topDriversAgg;
-    try {
-      const { Driver } = require('../../models/userModels');
-      const ids = topDriversAgg.map(d => String(d._id));
-      const local = ids.length ? await Driver.find({ _id: { $in: ids } }).select({ _id: 1, name: 1, phone: 1, email: 1 }).lean() : [];
-      const lmap = Object.fromEntries(local.map(d => [String(d._id), { name: d.name, phone: d.phone, email: d.email }]));
-      const unresolved = ids.filter(id => !lmap[id]);
-      let emap = {};
-      if (unresolved.length) {
-        try {
-          const { getDriversByIds } = require('../../integrations/userServiceClient');
-          const token = req.headers && req.headers.authorization ? req.headers.authorization : undefined;
-          const infos = await getDriversByIds(unresolved, token);
-          emap = Object.fromEntries((infos || []).map(i => [String(i.id), { name: i.name, phone: i.phone, email: i.email }]));
-        } catch (_) {}
-      }
-      topDrivers = topDriversAgg.map(d => ({
-        ...d,
-        driverName: (lmap[String(d._id)] || emap[String(d._id)] || {}).name,
-        driverPhone: (lmap[String(d._id)] || emap[String(d._id)] || {}).phone,
-        driverEmail: (lmap[String(d._id)] || emap[String(d._id)] || {}).email,
-      }));
-    } catch (_) {}
 
     res.json({
       weekStart: startDate,
@@ -192,7 +168,7 @@ exports.getWeeklyReport = async (req, res) => {
         return adminAgg[0]?.total || 0;
       })(),
       averageFare: completed.length > 0 ? totalRevenue / completed.length : 0,
-      topDrivers,
+      topDrivers: topDriversAgg,
       rideDetails
     });
   } catch (e) {
