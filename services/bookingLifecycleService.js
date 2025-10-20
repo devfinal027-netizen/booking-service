@@ -300,7 +300,7 @@ async function completeTrip(bookingId, endLocation, options = {}) {
     }
   } catch (_) {}
   try {
-    if (adminUserId) await walletService.credit(adminUserId, commission, 'Commission from trip');
+    if (adminUserId && Number.isFinite(commission) && commission > 0) await walletService.credit(adminUserId, commission, 'Commission from trip');
   } catch (_) {}
   try {
     if (debitPassengerWallet && booking.passengerId) await walletService.debit(booking.passengerId, fare, 'Trip fare');

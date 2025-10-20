@@ -47,6 +47,25 @@ exports.getDriverEarnings = async (req, res) => {
       }
     ]);
 
+    // Persistent monthly/weekly rollups: upsert into Payout with status 'pending' summary if configured
+    try {
+      const autoRollup = process.env.EARNINGS_AUTO_ROLLUP === '1';
+      if (autoRollup && Array.isArray(earnings) && earnings.length) {
+        const { Payout } = require('../../models/commission');
+        const period = period || 'custom';
+        const start = (dateFilter.tripDate && (dateFilter.tripDate.$gte || dateFilter.tripDate.$gte)) || new Date();
+        const end = (dateFilter.tripDate && (dateFilter.tripDate.$lt || dateFilter.tripDate.$lte)) || new Date();
+        const gross = earnings.reduce((s, e) => s + Number(e.grossFare || 0), 0);
+        const comm = earnings.reduce((s, e) => s + Number(e.commissionAmount || 0), 0);
+        const net = earnings.reduce((s, e) => s + Number(e.netEarnings || 0), 0);
+        await Payout.findOneAndUpdate(
+          { driverId: String(driverIdFilter), periodStart: start, periodEnd: end },
+          { $setOnInsert: { payoutPeriod: period, status: 'pending' }, $set: { totalEarnings: gross, totalCommission: comm, netPayout: net } },
+          { upsert: true }
+        );
+      }
+    } catch (_) {}
+
     // Integrate wallet balance
     let walletBalance = 0;
     try {
