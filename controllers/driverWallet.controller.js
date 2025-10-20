@@ -154,7 +154,38 @@ exports.adminListWallets = async (req, res) => {
       }
     } catch (_) {}
 
-    return res.json({ items: enriched, page, pageSize, total });
+    // Ensure totalEarnings exists and embed driver fields directly in wallet objects
+    let itemsOut = [];
+    try {
+      // Precompute credits per driver for backfilling totals
+      const driverIds = enriched.map(w => String(w.userId));
+      const creditAgg = await Transaction.aggregate([
+        { $match: { userId: { $in: driverIds }, role: 'driver', type: 'credit', status: 'success' } },
+        { $group: { _id: '$userId', total: { $sum: '$amount' } } }
+      ]);
+      const creditsMap = Object.fromEntries(creditAgg.map(r => [String(r._id), Number(r.total || 0)]));
+
+      itemsOut = enriched.map(w => {
+        const { user, ...rest } = w;
+        let out = { ...rest };
+        if (!Number.isFinite(Number(out.totalEarnings))) {
+          out.totalEarnings = creditsMap[String(out.userId)] || 0;
+        }
+        const d = user || {};
+        out = { ...out, id: d.id || String(out.userId) };
+        if (d.name) out.name = d.name;
+        if (d.phone) out.phone = d.phone;
+        if (d.email) out.email = d.email;
+        return out;
+      });
+    } catch (_) {
+      itemsOut = enriched.map(w => {
+        const { user, ...rest } = w;
+        return { ...rest, id: user?.id || String(rest.userId), totalEarnings: Number(rest.totalEarnings || 0) };
+      });
+    }
+
+    return res.json({ items: itemsOut, page, pageSize, total });
   } catch (e) { return res.status(500).json({ message: e.message }); }
 };
 
