@@ -72,10 +72,21 @@ exports.getDashboardStats = async (req, res) => {
     const totalCommissionVal = commissionsAgg[0]?.total || 0;
 
     // Pending payouts
-    const pendingPayoutsAgg = await Payout.aggregate([
+    let pendingPayoutsAgg = await Payout.aggregate([
       { $match: { status: 'pending' } },
       { $group: { _id: null, total: { $sum: '$netPayout' } } }
     ]);
+    // Fallback to DriverEarnings(status=pending) if no Payout docs exist
+    try {
+      if (!pendingPayoutsAgg || !pendingPayoutsAgg.length) {
+        const { DriverEarnings } = require('../../models/commission');
+        const deAgg = await DriverEarnings.aggregate([
+          { $match: { status: 'pending' } },
+          { $group: { _id: null, total: { $sum: '$netEarnings' } } }
+        ]);
+        pendingPayoutsAgg = deAgg;
+      }
+    } catch (_) {}
 
     res.json({
       overview: {

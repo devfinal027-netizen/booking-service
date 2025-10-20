@@ -5,6 +5,7 @@ const periodicCtrl = require('../../controllers/reports/periodicReports.controll
 const earningsCtrl = require('../../controllers/reports/driverEarnings.controller');
 const financeCtrl = require('../../controllers/reports/financeOverview.controller');
 const rewardsBaseCtrl = require('../../controllers/analytics.controller');
+const payoutsCtrl = require('../../controllers/reports/payouts.controller');
 const historyCtrl = require('../../controllers/reports/rideHistory.controller');
 const { authenticate, authorize } = require('../../middleware/auth');
 const { RewardRate } = require('../../models/commission');
@@ -33,6 +34,13 @@ router.get('/trips/history/:userType/:userId', historyCtrl.getTripHistoryByUserI
 
 // Finance Overview - Admin only
 router.get('/finance/overview', authenticate, authorize('admin', 'superadmin'), financeCtrl.getFinanceOverview);
+
+// Payouts management - Admin only
+router.get('/finance/payouts/pending', authenticate, authorize('admin','superadmin'), payoutsCtrl.getPendingPayouts);
+router.get('/finance/payouts', authenticate, authorize('admin','superadmin'), payoutsCtrl.listPayouts);
+router.get('/finance/payouts/:id', authenticate, authorize('admin','superadmin'), payoutsCtrl.getPayout);
+router.post('/finance/payouts/generate', authenticate, authorize('admin','superadmin'), payoutsCtrl.generatePayouts);
+router.post('/finance/payouts/:id/paid', authenticate, authorize('admin','superadmin'), payoutsCtrl.markPayoutPaid);
 
 // Rewards endpoints
 router.get('/rewards/passenger', authenticate, authorize('passenger','admin','superadmin'), rewardsBaseCtrl.getPassengerRewards);
