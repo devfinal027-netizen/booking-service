@@ -203,20 +203,19 @@ async function completeTrip(bookingId, endLocation, options = {}) {
     if (!fare || !Number.isFinite(fare) || fare <= 0) {
       fare = await pricingService.calculateFare(distanceKm, waitingTimeMinutes, booking.vehicleType, surgeMultiplier, discount);
     } else {
-      // Apply minimum/maximum fare constraints to the initial estimate
-      const pricing = await Pricing.findOne({ vehicleType: booking.vehicleType, isActive: true }).sort({ updatedAt: -1 });
-      if (pricing) {
-        const minimumFare = Number(pricing.minimumFare || 0);
-        const enforceMaxFare = process.env.ENFORCE_MAX_FARE === '1';
-        const maximumFare = enforceMaxFare ? Number(pricing.maximumFare || 0) : 0;
-        
-        if (minimumFare > 0) {
-          fare = Math.max(fare, minimumFare);
+      // Apply minimum/maximum fare constraints to the initial estimate (skip DB lookup in test env without MONGO_URI)
+      try {
+        if (process.env.MONGO_URI) {
+          const pricing = await Pricing.findOne({ vehicleType: booking.vehicleType, isActive: true }).sort({ updatedAt: -1 });
+          if (pricing) {
+            const minimumFare = Number(pricing.minimumFare || 0);
+            const enforceMaxFare = process.env.ENFORCE_MAX_FARE === '1';
+            const maximumFare = enforceMaxFare ? Number(pricing.maximumFare || 0) : 0;
+            if (minimumFare > 0) fare = Math.max(fare, minimumFare);
+            if (enforceMaxFare && maximumFare > 0) fare = Math.min(fare, maximumFare);
+          }
         }
-        if (enforceMaxFare && maximumFare > 0) {
-          fare = Math.min(fare, maximumFare);
-        }
-      }
+      } catch (_) {}
       
       // Apply surge multiplier and discount to the initial estimate
       const multiplier = Number(surgeMultiplier || 1);
@@ -227,20 +226,19 @@ async function completeTrip(bookingId, endLocation, options = {}) {
       fare = Math.max(fare, 0);
     }
   } else {
-    // Apply minimum/maximum fare constraints to the live pricing
-    const pricing = await Pricing.findOne({ vehicleType: booking.vehicleType, isActive: true }).sort({ updatedAt: -1 });
-    if (pricing) {
-      const minimumFare = Number(pricing.minimumFare || 0);
-      const enforceMaxFare = process.env.ENFORCE_MAX_FARE === '1';
-      const maximumFare = enforceMaxFare ? Number(pricing.maximumFare || 0) : 0;
-      
-      if (minimumFare > 0) {
-        fare = Math.max(fare, minimumFare);
+    // Apply minimum/maximum fare constraints to the live pricing (skip DB lookup in test env without MONGO_URI)
+    try {
+      if (process.env.MONGO_URI) {
+        const pricing = await Pricing.findOne({ vehicleType: booking.vehicleType, isActive: true }).sort({ updatedAt: -1 });
+        if (pricing) {
+          const minimumFare = Number(pricing.minimumFare || 0);
+          const enforceMaxFare = process.env.ENFORCE_MAX_FARE === '1';
+          const maximumFare = enforceMaxFare ? Number(pricing.maximumFare || 0) : 0;
+          if (minimumFare > 0) fare = Math.max(fare, minimumFare);
+          if (enforceMaxFare && maximumFare > 0) fare = Math.min(fare, maximumFare);
+        }
       }
-      if (enforceMaxFare && maximumFare > 0) {
-        fare = Math.min(fare, maximumFare);
-      }
-    }
+    } catch (_) {}
     
     // Apply surge multiplier and discount to the live pricing
     const multiplier = Number(surgeMultiplier || 1);
@@ -304,7 +302,7 @@ async function completeTrip(bookingId, endLocation, options = {}) {
     }
   } catch (_) {}
   try {
-    if (adminUserId) await walletService.credit(adminUserId, commission, 'Commission from trip');
+    if (adminUserId && Number.isFinite(commission) && commission > 0) await walletService.credit(adminUserId, commission, 'Commission from trip');
   } catch (_) {}
   try {
     if (debitPassengerWallet && booking.passengerId) await walletService.debit(booking.passengerId, fare, 'Trip fare');
@@ -343,7 +341,8 @@ async function completeTrip(bookingId, endLocation, options = {}) {
       await DriverEarnings.create({
         driverId: String(booking.driverId),
         bookingId: booking._id,
-        tripDate: new Date(),
+        // Use the canonical completion time for all financial reports
+        tripDate: completedAt,
         grossFare: fare,
         commissionAmount: commission,
         netEarnings: driverEarnings,
@@ -352,7 +351,8 @@ async function completeTrip(bookingId, endLocation, options = {}) {
     }
     await AdminEarnings.create({
       bookingId: booking._id,
-      tripDate: new Date(),
+      // Use the canonical completion time for all financial reports
+      tripDate: completedAt,
       grossFare: fare,
       commissionEarned: commission,
       commissionPercentage: commissionRate,

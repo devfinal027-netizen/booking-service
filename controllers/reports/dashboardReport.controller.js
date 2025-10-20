@@ -2,20 +2,21 @@ const dayjs = require('dayjs');
 const logger = require('../../utils/logger');
 const { Booking } = require('../../models/bookingModels');
 const { Complaint } = require('../../models/analytics');
-const { Payout } = require('../../models/commission');
+const { Payout, AdminEarnings } = require('../../models/commission');
 
 exports.getDashboardStats = async (req, res) => {
   try {
-    const today = dayjs().startOf('day').toDate();
-    const thisWeek = dayjs().startOf('week').toDate();
-    const thisMonth = dayjs().startOf('month').toDate();
+    const useUtc = process.env.REPORTS_USE_UTC === '1';
+    const d = useUtc && dayjs.utc ? dayjs.utc : dayjs;
+    const today = d().startOf('day').toDate();
+    const thisWeek = d().startOf('week').toDate();
+    const thisMonth = d().startOf('month').toDate();
 
     // Total counts
     const totalRides = await Booking.countDocuments();
-    // Earnings are only from completed trips with a finalized fare
-    const totalEarningsAgg = await Booking.aggregate([
-      { $match: { status: 'completed', fareFinal: { $gt: 0 } } },
-      { $group: { _id: null, total: { $sum: '$fareFinal' } } }
+    // Earnings are sourced from AdminEarnings for accuracy
+    const totalEarningsAgg = await AdminEarnings.aggregate([
+      { $group: { _id: null, total: { $sum: '$grossFare' } } }
     ]);
     // Fetch user counts from external service
     let totalUsers = 0;
@@ -38,42 +39,54 @@ exports.getDashboardStats = async (req, res) => {
     const todayRides = await Booking.countDocuments({
       createdAt: { $gte: today },
     });
-    const todayEarningsAgg = await Booking.aggregate([
-      { $match: { status: 'completed', createdAt: { $gte: today }, fareFinal: { $gt: 0 } } },
-      { $group: { _id: null, total: { $sum: '$fareFinal' } } }
+    const tomorrow = dayjs(today).add(1, 'day').toDate();
+    const todayEarningsAgg = await AdminEarnings.aggregate([
+      { $match: { tripDate: { $gte: today, $lt: tomorrow } } },
+      { $group: { _id: null, total: { $sum: '$grossFare' } } }
     ]);
 
     // This week's stats
     const weekRides = await Booking.countDocuments({
       createdAt: { $gte: thisWeek },
     });
-    const weekEarningsAgg = await Booking.aggregate([
-      { $match: { status: 'completed', createdAt: { $gte: thisWeek }, fareFinal: { $gt: 0 } } },
-      { $group: { _id: null, total: { $sum: '$fareFinal' } } }
+    const weekEnd = dayjs(thisWeek).endOf('week').toDate();
+    const weekEarningsAgg = await AdminEarnings.aggregate([
+      { $match: { tripDate: { $gte: thisWeek, $lte: weekEnd } } },
+      { $group: { _id: null, total: { $sum: '$grossFare' } } }
     ]);
 
     // This month's stats
     const monthRides = await Booking.countDocuments({
       createdAt: { $gte: thisMonth },
     });
-    const monthEarningsAgg = await Booking.aggregate([
-      { $match: { status: 'completed', createdAt: { $gte: thisMonth }, fareFinal: { $gt: 0 } } },
-      { $group: { _id: null, total: { $sum: '$fareFinal' } } }
+    const monthEnd = dayjs(thisMonth).endOf('month').toDate();
+    const monthEarningsAgg = await AdminEarnings.aggregate([
+      { $match: { tripDate: { $gte: thisMonth, $lte: monthEnd } } },
+      { $group: { _id: null, total: { $sum: '$grossFare' } } }
     ]);
 
-    // Commission stats - derived from completed trips
-    const commissionRate = Number(process.env.COMMISSION_RATE || 15);
-    const commissionsAgg = await Booking.aggregate([
-      { $match: { status: 'completed', fareFinal: { $gt: 0 } } },
-      { $group: { _id: null, total: { $sum: '$fareFinal' } } }
+    // Commission stats - from AdminEarnings
+    const commissionsAgg = await AdminEarnings.aggregate([
+      { $group: { _id: null, total: { $sum: '$commissionEarned' } } }
     ]);
-    const totalCommissionVal = ((commissionsAgg[0]?.total || 0) * commissionRate) / 100;
+    const totalCommissionVal = commissionsAgg[0]?.total || 0;
 
     // Pending payouts
-    const pendingPayoutsAgg = await Payout.aggregate([
+    let pendingPayoutsAgg = await Payout.aggregate([
       { $match: { status: 'pending' } },
       { $group: { _id: null, total: { $sum: '$netPayout' } } }
     ]);
+    // Fallback to DriverEarnings(status=pending) if no Payout docs exist
+    try {
+      if (!pendingPayoutsAgg || !pendingPayoutsAgg.length) {
+        const { DriverEarnings } = require('../../models/commission');
+        const deAgg = await DriverEarnings.aggregate([
+          { $match: { status: 'pending' } },
+          { $group: { _id: null, total: { $sum: '$netEarnings' } } }
+        ]);
+        pendingPayoutsAgg = deAgg;
+      }
+    } catch (_) {}
 
     res.json({
       overview: {

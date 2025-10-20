@@ -24,7 +24,7 @@ exports.getRideHistory = async (req, res) => {
       .skip((page - 1) * limit)
       .lean();
 
-    // Enrich driver details from local DB when possible
+    // Enrich driver details from local DB when possible; fallback to external service for unresolved
     const driverIds = [...new Set(rides.map(r => r.driverId).filter(Boolean))].map(String);
     const validDriverIds = driverIds.filter(id => require('mongoose').Types.ObjectId.isValid(id));
     let driverInfoMap = {};
@@ -34,8 +34,19 @@ exports.getRideHistory = async (req, res) => {
         driverInfoMap = Object.fromEntries(drivers.map(d => [String(d._id), { id: String(d._id), name: d.name, phone: d.phone, email: d.email }]));
       } catch (_) {}
     }
+    // External fallback for any unresolved driver IDs
+    try {
+      const unresolved = driverIds.filter(id => !driverInfoMap[id]);
+      if (unresolved.length) {
+        const { getDriversByIds } = require('../../integrations/userServiceClient');
+        const token = req.headers && req.headers.authorization ? req.headers.authorization : undefined;
+        const infos = await getDriversByIds(unresolved, token);
+        const emap = Object.fromEntries((infos || []).map(i => [String(i.id), { id: String(i.id), name: i.name, phone: i.phone, email: i.email }]));
+        driverInfoMap = { ...driverInfoMap, ...emap };
+      }
+    } catch (_) {}
 
-    // Enrich passenger details from local DB when possible
+    // Enrich passenger details from local DB when possible; fallback to external service for unresolved
     const passengerIds = [...new Set(rides.map(r => r.passengerId).filter(Boolean))].map(String);
     const validPassengerIds = passengerIds.filter(id => require('mongoose').Types.ObjectId.isValid(id));
     let passengerMap = {};
@@ -45,6 +56,16 @@ exports.getRideHistory = async (req, res) => {
         passengerMap = Object.fromEntries(passengers.map(p => [String(p._id), { id: String(p._id), name: p.name, phone: p.phone, email: p.email }]));
       } catch (_) {}
     }
+    try {
+      const unresolvedPassengers = passengerIds.filter(id => !passengerMap[id]);
+      if (unresolvedPassengers.length) {
+        const { getPassengerById } = require('../../integrations/userServiceClient');
+        const headers = req.headers && req.headers.authorization ? { headers: { Authorization: req.headers.authorization } } : {};
+        const results = await Promise.all(unresolvedPassengers.map(id => getPassengerById(id, headers).catch(() => null)));
+        const pmap = Object.fromEntries((results || []).filter(Boolean).map(u => [String(u.id), { id: String(u.id), name: u.name, phone: u.phone, email: u.email }]));
+        passengerMap = { ...passengerMap, ...pmap };
+      }
+    } catch (_) {}
 
     const total = await Booking.countDocuments(query);
 

@@ -6,56 +6,69 @@ exports.getFinanceOverview = async (req, res) => {
   try {
     const { period = 'monthly' } = req.query;
 
-    let dateFilter = {};
-    if (period === 'daily') {
-      const today = dayjs().startOf('day').toDate();
-      const tomorrow = dayjs().add(1, 'day').startOf('day').toDate();
-      dateFilter = { tripDate: { $gte: today, $lt: tomorrow } };
-    } else if (period === 'weekly') {
-      const weekStart = dayjs().startOf('week').toDate();
-      const weekEnd = dayjs().endOf('week').toDate();
-      dateFilter = { tripDate: { $gte: weekStart, $lte: weekEnd } };
-    } else if (period === 'monthly') {
-      const monthStart = dayjs().startOf('month').toDate();
-      const monthEnd = dayjs().endOf('month').toDate();
-      dateFilter = { tripDate: { $gte: monthStart, $lte: monthEnd } };
-    }
+  // For financials (AdminEarnings/DriverEarnings), we filter by tripDate.
+  // For Booking revenue (completed trips), we must filter by completedAt.
+  let earningsDateFilter = {};
+  let bookingDateFilter = {};
+  if (period === 'daily') {
+    const today = dayjs().startOf('day').toDate();
+    const tomorrow = dayjs().add(1, 'day').startOf('day').toDate();
+    earningsDateFilter = { tripDate: { $gte: today, $lt: tomorrow } };
+    bookingDateFilter = { completedAt: { $gte: today, $lt: tomorrow } };
+  } else if (period === 'weekly') {
+    const weekStart = dayjs().startOf('week').toDate();
+    const weekEnd = dayjs().endOf('week').toDate();
+    earningsDateFilter = { tripDate: { $gte: weekStart, $lte: weekEnd } };
+    bookingDateFilter = { completedAt: { $gte: weekStart, $lte: weekEnd } };
+  } else if (period === 'monthly') {
+    const monthStart = dayjs().startOf('month').toDate();
+    const monthEnd = dayjs().endOf('month').toDate();
+    earningsDateFilter = { tripDate: { $gte: monthStart, $lte: monthEnd } };
+    bookingDateFilter = { completedAt: { $gte: monthStart, $lte: monthEnd } };
+  }
 
-    // Total revenue
-    const totalRevenue = await Booking.aggregate([
-      { $match: { status: 'completed', ...dateFilter } },
+  // Total revenue (from completed bookings in period by completedAt)
+  const totalRevenue = await Booking.aggregate([
+      { $match: { status: 'completed', ...bookingDateFilter } },
       { $group: { _id: null, total: { $sum: '$fareFinal' } } }
     ]);
 
     // Commission earned
-    const commissionEarned = await AdminEarnings.aggregate([
-      { $match: dateFilter },
+  const commissionEarned = await AdminEarnings.aggregate([
+      { $match: earningsDateFilter },
       { $group: { _id: null, total: { $sum: '$commissionEarned' } } }
     ]);
 
     // Pending payouts
     const { Payout } = require('../../models/commission');
-    const pendingPayouts = await Payout.aggregate([
+    let pendingPayouts = await Payout.aggregate([
       { $match: { status: 'pending' } },
       { $group: { _id: null, total: { $sum: '$netPayout' } } }
     ]);
+    try {
+      if (!pendingPayouts || !pendingPayouts.length) {
+        const deAgg = await DriverEarnings.aggregate([
+          { $match: { status: 'pending', ...earningsDateFilter } },
+          { $group: { _id: null, total: { $sum: '$netEarnings' } } }
+        ]);
+        pendingPayouts = deAgg;
+      }
+    } catch (_) {}
 
     // Top earning drivers (raw)
-    const topDriversRaw = await DriverEarnings.aggregate([
-      { $match: dateFilter },
+  const topDriversRaw = await DriverEarnings.aggregate([
+      { $match: earningsDateFilter },
       { $group: { _id: '$driverId', totalEarnings: { $sum: '$netEarnings' }, totalRides: { $sum: 1 } } },
       { $sort: { totalEarnings: -1 } },
       { $limit: 10 }
     ]);
 
-    // Enrich names/phones from local DB and optionally external service
+    // Enrich names/phones from local DB and optionally external service (drivers have string _id)
     let topDrivers = topDriversRaw;
     try {
       const { Driver } = require('../../models/userModels');
-      const { Types } = require('mongoose');
       const ids = topDriversRaw.map(d => String(d._id));
-      const valid = ids.filter(id => Types.ObjectId.isValid(id));
-      const local = valid.length ? await Driver.find({ _id: { $in: valid } }).select({ _id: 1, name: 1, phone: 1, email: 1, carName: 1, carModel: 1, carPlate: 1, carColor: 1 }).lean() : [];
+      const local = ids.length ? await Driver.find({ _id: { $in: ids } }).select({ _id: 1, name: 1, phone: 1, email: 1, carName: 1, carModel: 1, carPlate: 1, carColor: 1 }).lean() : [];
       const lmap = Object.fromEntries(local.map(d => [String(d._id), {
         name: d.name,
         phone: d.phone,
@@ -70,8 +83,8 @@ exports.getFinanceOverview = async (req, res) => {
       if (unresolved.length) {
         try {
           const { getDriversByIds } = require('../../integrations/userServiceClient');
-          const headers = req.headers && req.headers.authorization ? { Authorization: req.headers.authorization } : undefined;
-          const infos = await getDriversByIds(unresolved, { headers });
+          const token = req.headers && req.headers.authorization ? req.headers.authorization : undefined;
+          const infos = await getDriversByIds(unresolved, token);
           emap = Object.fromEntries((infos || []).map(i => [String(i.id), {
             name: i.name,
             phone: i.phone,
@@ -100,7 +113,7 @@ exports.getFinanceOverview = async (req, res) => {
 
     // Most profitable routes (by distance)
     const profitableRoutes = await Booking.aggregate([
-      { $match: { status: 'completed', ...dateFilter } },
+      { $match: { status: 'completed', ...bookingDateFilter } },
       { $group: {
         _id: {
           pickupLat: { $round: ['$pickup.latitude', 2] },

@@ -1,18 +1,18 @@
 const dayjs = require('dayjs');
 const { Booking } = require('../../models/bookingModels');
 const { AdminEarnings, DriverEarnings } = require('../../models/commission');
-const { buildUserMaps } = require('./_utils');
+const { buildUserMaps, buildTimeRange } = require('./_utils');
 
 exports.getDailyReport = async (req, res) => {
   try {
     const { date } = req.query;
-    const targetDate = date ? dayjs(date).startOf('day').toDate() : dayjs().startOf('day').toDate();
-    const nextDay = dayjs(targetDate).add(1, 'day').toDate();
+    const { start: targetDate, end: nextDay } = buildTimeRange('daily', { date });
     const commissionRate = Number(process.env.COMMISSION_RATE || 15);
 
-    const rides = await Booking.find({ createdAt: { $gte: targetDate, $lt: nextDay } }).populate('driverId passengerId');
-    const completed = rides.filter(r => r.status === 'completed');
-    const totalRevenue = completed.reduce((sum, r) => sum + Number(r.fareFinal || r.fareEstimated || 0), 0);
+    // Use completedAt for rides within period
+    const rides = await Booking.find({ completedAt: { $gte: targetDate, $lt: nextDay }, status: 'completed' }).populate('driverId passengerId');
+    const completed = rides; // already filtered
+    const totalRevenue = completed.reduce((sum, r) => sum + Number(r.fareFinal || 0), 0);
     const totalCommission = await AdminEarnings.aggregate([
       { $match: { tripDate: { $gte: targetDate, $lt: nextDay } } },
       { $group: { _id: null, total: { $sum: '$commissionEarned' } } }
@@ -35,7 +35,33 @@ exports.getDailyReport = async (req, res) => {
       distanceKm: Number(r.distanceKm || 0),
       _id: r._id
     }));
-    const { driverMap, passengerMap } = await buildUserMaps(rideDetailsRaw.map(x => x.driverId), rideDetailsRaw.map(x => x.passengerId));
+    let { driverMap, passengerMap } = await buildUserMaps(rideDetailsRaw.map(x => x.driverId), rideDetailsRaw.map(x => x.passengerId));
+    // Fallback enrich unresolved via external user service
+    try {
+      const unresolvedDriverIds = Array.from(new Set(rideDetailsRaw.map(x => x.driverId).filter(Boolean).map(String)))
+        .filter(id => !driverMap[id]);
+      if (unresolvedDriverIds.length) {
+        const { getDriversByIds } = require('../../integrations/userServiceClient');
+        const token = req.headers && req.headers.authorization ? req.headers.authorization : undefined;
+        const infos = await getDriversByIds(unresolvedDriverIds, token);
+        const emap = Object.fromEntries((infos || []).map(i => [String(i.id), {
+          id: String(i.id), name: i.name, phone: i.phone, email: i.email,
+          vehicleType: i.vehicleType, carName: i.carName, carModel: i.carModel, carPlate: i.carPlate, carColor: i.carColor
+        }]));
+        driverMap = { ...driverMap, ...emap };
+      }
+    } catch (_) {}
+    try {
+      const unresolvedPassengerIds = Array.from(new Set(rideDetailsRaw.map(x => x.passengerId).filter(Boolean).map(String)))
+        .filter(id => !passengerMap[id]);
+      if (unresolvedPassengerIds.length) {
+        const { getPassengerById } = require('../../integrations/userServiceClient');
+        const headers = req.headers && req.headers.authorization ? { headers: { Authorization: req.headers.authorization } } : {};
+        const results = await Promise.all(unresolvedPassengerIds.map(id => getPassengerById(id, headers).catch(() => null)));
+        const pmap = Object.fromEntries((results || []).filter(Boolean).map(u => [String(u.id), { id: String(u.id), name: u.name, phone: u.phone, email: u.email }]));
+        passengerMap = { ...passengerMap, ...pmap };
+      }
+    } catch (_) {}
     const rideDetails = rideDetailsRaw.map(x => ({
       ...x,
       driver: x.driverId ? (driverMap[String(x.driverId)] || { id: String(x.driverId) }) : undefined,
@@ -62,12 +88,11 @@ exports.getDailyReport = async (req, res) => {
 exports.getWeeklyReport = async (req, res) => {
   try {
     const { weekStart } = req.query;
-    const startDate = weekStart ? dayjs(weekStart).startOf('week').toDate() : dayjs().startOf('week').toDate();
-    const endDate = dayjs(startDate).endOf('week').toDate();
+    const { start: startDate, end: endDate, inclusiveEnd } = buildTimeRange('weekly', { weekStart });
     const commissionRate = Number(process.env.COMMISSION_RATE || 15);
 
-    const rides = await Booking.find({ createdAt: { $gte: startDate, $lte: endDate } }).populate('driverId passengerId').lean();
-    const completed = rides.filter(r => r.status === 'completed');
+    const rides = await Booking.find({ status: 'completed', completedAt: inclusiveEnd ? { $gte: startDate, $lte: endDate } : { $gte: startDate, $lt: endDate } }).populate('driverId passengerId').lean();
+    const completed = rides; // already filtered
     const totalRevenue = completed.reduce((sum, r) => sum + Number(r.fareFinal || 0), 0);
 
     const rideDetailsRaw = rides.map(r => ({
@@ -87,7 +112,33 @@ exports.getWeeklyReport = async (req, res) => {
       distanceKm: Number(r.distanceKm || 0),
       _id: r._id
     }));
-    const { driverMap, passengerMap } = await buildUserMaps(rideDetailsRaw.map(x => x.driverId), rideDetailsRaw.map(x => x.passengerId));
+    let { driverMap, passengerMap } = await buildUserMaps(rideDetailsRaw.map(x => x.driverId), rideDetailsRaw.map(x => x.passengerId));
+    // Fallback external enrich
+    try {
+      const unresolvedDriverIds = Array.from(new Set(rideDetailsRaw.map(x => x.driverId).filter(Boolean).map(String)))
+        .filter(id => !driverMap[id]);
+      if (unresolvedDriverIds.length) {
+        const { getDriversByIds } = require('../../integrations/userServiceClient');
+        const token = req.headers && req.headers.authorization ? req.headers.authorization : undefined;
+        const infos = await getDriversByIds(unresolvedDriverIds, token);
+        const emap = Object.fromEntries((infos || []).map(i => [String(i.id), {
+          id: String(i.id), name: i.name, phone: i.phone, email: i.email,
+          vehicleType: i.vehicleType, carName: i.carName, carModel: i.carModel, carPlate: i.carPlate, carColor: i.carColor
+        }]));
+        driverMap = { ...driverMap, ...emap };
+      }
+    } catch (_) {}
+    try {
+      const unresolvedPassengerIds = Array.from(new Set(rideDetailsRaw.map(x => x.passengerId).filter(Boolean).map(String)))
+        .filter(id => !passengerMap[id]);
+      if (unresolvedPassengerIds.length) {
+        const { getPassengerById } = require('../../integrations/userServiceClient');
+        const headers = req.headers && req.headers.authorization ? { headers: { Authorization: req.headers.authorization } } : {};
+        const results = await Promise.all(unresolvedPassengerIds.map(id => getPassengerById(id, headers).catch(() => null)));
+        const pmap = Object.fromEntries((results || []).filter(Boolean).map(u => [String(u.id), { id: String(u.id), name: u.name, phone: u.phone, email: u.email }]));
+        passengerMap = { ...passengerMap, ...pmap };
+      }
+    } catch (_) {}
     const rideDetails = rideDetailsRaw.map(x => ({
       ...x,
       driver: x.driverId ? (driverMap[String(x.driverId)] || { id: String(x.driverId) }) : undefined,
@@ -95,11 +146,12 @@ exports.getWeeklyReport = async (req, res) => {
     }));
 
     const topDriversAgg = await DriverEarnings.aggregate([
-      { $match: { tripDate: { $gte: startDate, $lte: endDate } } },
+      { $match: { tripDate: inclusiveEnd ? { $gte: startDate, $lte: endDate } : { $gte: startDate, $lt: endDate } } },
       { $group: { _id: '$driverId', rides: { $sum: 1 }, gross: { $sum: '$grossFare' }, commission: { $sum: '$commissionAmount' }, net: { $sum: '$netEarnings' } } },
       { $sort: { net: -1 } },
       { $limit: 10 }
     ]);
+
 
     res.json({
       weekStart: startDate,
@@ -110,7 +162,7 @@ exports.getWeeklyReport = async (req, res) => {
       totalRevenue,
       totalCommission: await (async () => {
         const adminAgg = await AdminEarnings.aggregate([
-          { $match: { tripDate: { $gte: startDate, $lte: endDate } } },
+          { $match: { tripDate: inclusiveEnd ? { $gte: startDate, $lte: endDate } : { $gte: startDate, $lt: endDate } } },
           { $group: { _id: null, total: { $sum: '$commissionEarned' } } }
         ]);
         return adminAgg[0]?.total || 0;
@@ -126,16 +178,22 @@ exports.getWeeklyReport = async (req, res) => {
 
 exports.getMonthlyReport = async (req, res) => {
   try {
-    const { month, year } = req.query;
-    const targetMonth = month ? parseInt(month) : dayjs().month() + 1;
-    const targetYear = year ? parseInt(year) : dayjs().year();
-    const startDate = dayjs().month(targetMonth - 1).year(targetYear).startOf('month').toDate();
-    const endDate = dayjs().month(targetMonth - 1).year(targetYear).endOf('month').toDate();
+    const { month, year, targetMonth } = req.query;
+    // Support legacy 'targetMonth' like 2025-9 as month/year
+    let m = month, y = year;
+    if (!m && targetMonth) {
+      const parts = String(targetMonth).split('-');
+      if (parts.length >= 2) {
+        y = y || parts[0];
+        m = m || parts[1];
+      }
+    }
+    const { start: startDate, end: endDate, inclusiveEnd } = buildTimeRange('monthly', { month: m, year: y });
     const commissionRate = Number(process.env.COMMISSION_RATE || 15);
 
-    const rides = await Booking.find({ createdAt: { $gte: startDate, $lte: endDate } }).populate('driverId passengerId').lean();
-    const completed = rides.filter(r => r.status === 'completed');
-    const totalRevenue = completed.reduce((sum, r) => sum + (r.fareFinal || r.fareEstimated || 0), 0);
+    const rides = await Booking.find({ status: 'completed', completedAt: inclusiveEnd ? { $gte: startDate, $lte: endDate } : { $gte: startDate, $lt: endDate } }).populate('driverId passengerId').lean();
+    const completed = rides; // already filtered
+    const totalRevenue = completed.reduce((sum, r) => sum + Number(r.fareFinal || 0), 0);
 
     const rideDetailsRaw = rides.map(r => ({
       bookingId: r._id,
@@ -154,7 +212,33 @@ exports.getMonthlyReport = async (req, res) => {
       distanceKm: Number(r.distanceKm || 0),
       _id: r._id
     }));
-    const { driverMap, passengerMap } = await buildUserMaps(rideDetailsRaw.map(x => x.driverId), rideDetailsRaw.map(x => x.passengerId));
+    let { driverMap, passengerMap } = await buildUserMaps(rideDetailsRaw.map(x => x.driverId), rideDetailsRaw.map(x => x.passengerId));
+    // Fallback external enrich
+    try {
+      const unresolvedDriverIds = Array.from(new Set(rideDetailsRaw.map(x => x.driverId).filter(Boolean).map(String)))
+        .filter(id => !driverMap[id]);
+      if (unresolvedDriverIds.length) {
+        const { getDriversByIds } = require('../../integrations/userServiceClient');
+        const token = req.headers && req.headers.authorization ? req.headers.authorization : undefined;
+        const infos = await getDriversByIds(unresolvedDriverIds, token);
+        const emap = Object.fromEntries((infos || []).map(i => [String(i.id), {
+          id: String(i.id), name: i.name, phone: i.phone, email: i.email,
+          vehicleType: i.vehicleType, carName: i.carName, carModel: i.carModel, carPlate: i.carPlate, carColor: i.carColor
+        }]));
+        driverMap = { ...driverMap, ...emap };
+      }
+    } catch (_) {}
+    try {
+      const unresolvedPassengerIds = Array.from(new Set(rideDetailsRaw.map(x => x.passengerId).filter(Boolean).map(String)))
+        .filter(id => !passengerMap[id]);
+      if (unresolvedPassengerIds.length) {
+        const { getPassengerById } = require('../../integrations/userServiceClient');
+        const headers = req.headers && req.headers.authorization ? { headers: { Authorization: req.headers.authorization } } : {};
+        const results = await Promise.all(unresolvedPassengerIds.map(id => getPassengerById(id, headers).catch(() => null)));
+        const pmap = Object.fromEntries((results || []).filter(Boolean).map(u => [String(u.id), { id: String(u.id), name: u.name, phone: u.phone, email: u.email }]));
+        passengerMap = { ...passengerMap, ...pmap };
+      }
+    } catch (_) {}
     const rideDetails = rideDetailsRaw.map(x => ({
       ...x,
       driver: x.driverId ? (driverMap[String(x.driverId)] || { id: String(x.driverId) }) : undefined,
@@ -167,8 +251,8 @@ exports.getMonthlyReport = async (req, res) => {
     ]);
 
     res.json({
-      month: targetMonth,
-      year: targetYear,
+      month: Number(m || (new Date(startDate).getMonth() + 1)),
+      year: Number(y || new Date(startDate).getFullYear()),
       totalRides: rides.length,
       totalRevenue,
       totalCommission: adminAgg[0]?.total || 0,

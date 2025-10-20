@@ -47,6 +47,35 @@ async function computeRewardsForUser(userType, userId) {
   return { totalDistanceKm, completedRides, rewardPoints };
 }
 
-module.exports = { buildUserMaps, computeRewardsForUser };
+function buildTimeRange(period, params = {}, tz) {
+  const dayjs = require('dayjs');
+  const useUtc = process.env.REPORTS_USE_UTC === '1';
+  const d = useUtc && dayjs.utc ? dayjs.utc : dayjs;
+  if (period === 'daily') {
+    const date = params.date ? d(params.date) : d();
+    const start = date.startOf('day').toDate();
+    const end = date.add(1, 'day').startOf('day').toDate();
+    return { start, end };
+  }
+  if (period === 'weekly') {
+    const base = params.weekStart ? d(params.weekStart) : d();
+    const start = base.startOf('week').toDate();
+    const end = base.endOf('week').toDate();
+    return { start, end, inclusiveEnd: true };
+  }
+  if (period === 'monthly') {
+    const m = params.month ? parseInt(params.month) : (d().month() + 1);
+    const y = params.year ? parseInt(params.year) : d().year();
+    const start = d().month(m - 1).year(y).startOf('month').toDate();
+    const end = d().month(m - 1).year(y).endOf('month').toDate();
+    return { start, end, inclusiveEnd: true };
+  }
+  // fallback: today
+  const start = d().startOf('day').toDate();
+  const end = d().add(1, 'day').startOf('day').toDate();
+  return { start, end };
+}
+
+module.exports = { buildUserMaps, computeRewardsForUser, buildTimeRange };
 
 
