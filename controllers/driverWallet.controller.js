@@ -202,6 +202,10 @@ exports.adminGetDriverWallet = async (req, res) => {
       }
     }
 
-    return res.json({ wallet: walletOut, driver, transactions: txs });
+    const walletWithDriver = {
+      ...walletOut,
+      ...(driver ? { id: driver.id, name: driver.name, phone: driver.phone, email: driver.email } : { id: driverId })
+    };
+    return res.json({ wallet: walletWithDriver, transactions: txs });
   } catch (e) { return res.status(500).json({ message: e.message }); }
 };
