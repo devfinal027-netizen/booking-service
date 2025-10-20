@@ -167,33 +167,10 @@ exports.adminGetDriverWallet = async (req, res) => {
       Wallet.findOne({ userId: driverId, role: 'driver' }).lean(),
       Transaction.find({ userId: driverId, role: 'driver' }).sort({ createdAt: -1 }).limit(limit).lean(),
     ]);
-    // Attach driver user info: prefer local DB (by _id or externalId), else external service as fallback
-    let user;
-    try {
-      const { Driver } = require('../models/userModels');
-      const { Types } = require('mongoose');
-      if (Types.ObjectId.isValid(driverId)) {
-        const d = await Driver.findById(driverId).select({ _id: 1, name: 1, phone: 1, email: 1 }).lean();
-        if (d) user = { id: String(d._id), name: d.name, phone: d.phone, email: d.email };
-      }
-      if (!user) {
-        const d = await Driver.findOne({ externalId: String(driverId) }).select({ _id: 1, name: 1, phone: 1, email: 1, externalId: 1 }).lean();
-        if (d) user = { id: String(d._id), name: d.name, phone: d.phone, email: d.email, externalId: String(d.externalId) };
-      }
-    } catch (_) {}
-    if (!user) {
-      try {
-        const { getDriverById } = require('../integrations/userServiceClient');
-        // Try with caller token first
-        const headers = req.headers && req.headers.authorization ? { Authorization: req.headers.authorization } : undefined;
-        let info = await getDriverById(driverId, { headers });
-        if ((!info || !info.name || !info.phone) && process.env.AUTH_SERVICE_BEARER) {
-          // Fallback to service bearer if user token lacks permission
-          info = await getDriverById(driverId, { headers: undefined });
-        }
-        if (info) user = { id: String(info.id), name: info.name, phone: info.phone, email: info.email };
-      } catch (_) {}
-    }
-    return res.json({ wallet: wallet || { userId: driverId, role: 'driver', balance: 0, totalEarnings: 0, currency: 'ETB' }, user: user || { id: driverId }, transactions: txs });
+    // Restore original response format: only wallet and transactions
+    return res.json({
+      wallet: wallet || { userId: driverId, role: 'driver', balance: 0, totalEarnings: 0, currency: 'ETB' },
+      transactions: txs
+    });
   } catch (e) { return res.status(500).json({ message: e.message }); }
 };
