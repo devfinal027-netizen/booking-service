@@ -167,10 +167,41 @@ exports.adminGetDriverWallet = async (req, res) => {
       Wallet.findOne({ userId: driverId, role: 'driver' }).lean(),
       Transaction.find({ userId: driverId, role: 'driver' }).sort({ createdAt: -1 }).limit(limit).lean(),
     ]);
-    // Restore original response format: only wallet and transactions
-    return res.json({
-      wallet: wallet || { userId: driverId, role: 'driver', balance: 0, totalEarnings: 0, currency: 'ETB' },
-      transactions: txs
-    });
+    // Compute driver details (name, phone, email) from local DB or external service
+    let driver = undefined;
+    try {
+      const { Driver } = require('../models/userModels');
+      // Driver _id is a string in this codebase
+      const d = await Driver.findById(driverId).select({ _id: 1, name: 1, phone: 1, email: 1 }).lean();
+      if (d) driver = { id: String(d._id), name: d.name, phone: d.phone, email: d.email };
+      if (!driver) {
+        const de = await Driver.findOne({ externalId: String(driverId) }).select({ _id: 1, name: 1, phone: 1, email: 1, externalId: 1 }).lean();
+        if (de) driver = { id: String(de._id), name: de.name, phone: de.phone, email: de.email, externalId: String(de.externalId) };
+      }
+    } catch (_) {}
+    if (!driver) {
+      try {
+        const { getDriverById } = require('../integrations/userServiceClient');
+        const headers = req.headers && req.headers.authorization ? { Authorization: req.headers.authorization } : undefined;
+        const info = await getDriverById(driverId, { headers });
+        if (info) driver = { id: String(info.id), name: info.name, phone: info.phone, email: info.email };
+      } catch (_) {}
+    }
+
+    // Ensure wallet.totalEarnings is present; if missing, backfill from successful driver credit transactions
+    let walletOut = wallet || { userId: driverId, role: 'driver', balance: 0, currency: 'ETB' };
+    if (!Number.isFinite(Number(walletOut.totalEarnings))) {
+      try {
+        const agg = await Transaction.aggregate([
+          { $match: { userId: driverId, role: 'driver', type: 'credit', status: 'success' } },
+          { $group: { _id: null, total: { $sum: '$amount' } } }
+        ]);
+        walletOut = { ...walletOut, totalEarnings: Number(agg[0]?.total || 0) };
+      } catch (_) {
+        walletOut = { ...walletOut, totalEarnings: 0 };
+      }
+    }
+
+    return res.json({ wallet: walletOut, driver, transactions: txs });
   } catch (e) { return res.status(500).json({ message: e.message }); }
 };
