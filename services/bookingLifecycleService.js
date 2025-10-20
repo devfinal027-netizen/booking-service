@@ -207,12 +207,13 @@ async function completeTrip(bookingId, endLocation, options = {}) {
       const pricing = await Pricing.findOne({ vehicleType: booking.vehicleType, isActive: true }).sort({ updatedAt: -1 });
       if (pricing) {
         const minimumFare = Number(pricing.minimumFare || 0);
-        const maximumFare = Number(pricing.maximumFare || 0);
+        const enforceMaxFare = process.env.ENFORCE_MAX_FARE === '1';
+        const maximumFare = enforceMaxFare ? Number(pricing.maximumFare || 0) : 0;
         
         if (minimumFare > 0) {
           fare = Math.max(fare, minimumFare);
         }
-        if (maximumFare > 0) {
+        if (enforceMaxFare && maximumFare > 0) {
           fare = Math.min(fare, maximumFare);
         }
       }
@@ -230,12 +231,13 @@ async function completeTrip(bookingId, endLocation, options = {}) {
     const pricing = await Pricing.findOne({ vehicleType: booking.vehicleType, isActive: true }).sort({ updatedAt: -1 });
     if (pricing) {
       const minimumFare = Number(pricing.minimumFare || 0);
-      const maximumFare = Number(pricing.maximumFare || 0);
+      const enforceMaxFare = process.env.ENFORCE_MAX_FARE === '1';
+      const maximumFare = enforceMaxFare ? Number(pricing.maximumFare || 0) : 0;
       
       if (minimumFare > 0) {
         fare = Math.max(fare, minimumFare);
       }
-      if (maximumFare > 0) {
+      if (enforceMaxFare && maximumFare > 0) {
         fare = Math.min(fare, maximumFare);
       }
     }

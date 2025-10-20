@@ -248,7 +248,8 @@ async function calculateLivePricing(bookingId, currentLocation) {
   const waitingPerMinute = Number(pricing.waitingPerMinute || 0);
     const surgeMultiplier = Number(pricing.surgeMultiplier || 1) > 0 ? Number(pricing.surgeMultiplier || 1) : 1;
     const minimumFare = Number(pricing.minimumFare || 0);
-    const maximumFare = Number(pricing.maximumFare || 0);
+    const enforceMaxFare = process.env.ENFORCE_MAX_FARE === '1';
+    const maximumFare = enforceMaxFare ? Number(pricing.maximumFare || 0) : 0;
 
     const distanceCostRaw = distanceTraveled * perKm;
     
@@ -260,7 +261,7 @@ async function calculateLivePricing(bookingId, currentLocation) {
     if (minimumFare > 0 && currentFare < minimumFare) {
       currentFare = minimumFare;
     }
-    if (maximumFare > 0 && currentFare > maximumFare) {
+    if (enforceMaxFare && maximumFare > 0 && currentFare > maximumFare) {
       currentFare = maximumFare;
     }
 
@@ -288,7 +289,8 @@ async function calculateLivePricing(bookingId, currentLocation) {
       },
       currentFare: Math.round(currentFare * 100) / 100,
       finalFare: Math.round(finalFare * 100) / 100,
-      minimumFareApplied: finalFare > currentFare
+      minimumFareApplied: finalFare > currentFare,
+      maximumFareEnforced: enforceMaxFare && maximumFare > 0
     });
 
   // Prefer accumulated distance if available and greater
