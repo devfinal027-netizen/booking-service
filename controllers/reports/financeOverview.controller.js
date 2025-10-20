@@ -63,14 +63,12 @@ exports.getFinanceOverview = async (req, res) => {
       { $limit: 10 }
     ]);
 
-    // Enrich names/phones from local DB and optionally external service
+    // Enrich names/phones from local DB and optionally external service (drivers have string _id)
     let topDrivers = topDriversRaw;
     try {
       const { Driver } = require('../../models/userModels');
-      const { Types } = require('mongoose');
       const ids = topDriversRaw.map(d => String(d._id));
-      const valid = ids.filter(id => Types.ObjectId.isValid(id));
-      const local = valid.length ? await Driver.find({ _id: { $in: valid } }).select({ _id: 1, name: 1, phone: 1, email: 1, carName: 1, carModel: 1, carPlate: 1, carColor: 1 }).lean() : [];
+      const local = ids.length ? await Driver.find({ _id: { $in: ids } }).select({ _id: 1, name: 1, phone: 1, email: 1, carName: 1, carModel: 1, carPlate: 1, carColor: 1 }).lean() : [];
       const lmap = Object.fromEntries(local.map(d => [String(d._id), {
         name: d.name,
         phone: d.phone,

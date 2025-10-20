@@ -152,6 +152,31 @@ exports.getWeeklyReport = async (req, res) => {
       { $limit: 10 }
     ]);
 
+    // Enrich topDrivers with driver details from local DB or external service
+    let topDrivers = topDriversAgg;
+    try {
+      const { Driver } = require('../../models/userModels');
+      const ids = topDriversAgg.map(d => String(d._id));
+      const local = ids.length ? await Driver.find({ _id: { $in: ids } }).select({ _id: 1, name: 1, phone: 1, email: 1 }).lean() : [];
+      const lmap = Object.fromEntries(local.map(d => [String(d._id), { name: d.name, phone: d.phone, email: d.email }]));
+      const unresolved = ids.filter(id => !lmap[id]);
+      let emap = {};
+      if (unresolved.length) {
+        try {
+          const { getDriversByIds } = require('../../integrations/userServiceClient');
+          const token = req.headers && req.headers.authorization ? req.headers.authorization : undefined;
+          const infos = await getDriversByIds(unresolved, token);
+          emap = Object.fromEntries((infos || []).map(i => [String(i.id), { name: i.name, phone: i.phone, email: i.email }]));
+        } catch (_) {}
+      }
+      topDrivers = topDriversAgg.map(d => ({
+        ...d,
+        driverName: (lmap[String(d._id)] || emap[String(d._id)] || {}).name,
+        driverPhone: (lmap[String(d._id)] || emap[String(d._id)] || {}).phone,
+        driverEmail: (lmap[String(d._id)] || emap[String(d._id)] || {}).email,
+      }));
+    } catch (_) {}
+
     res.json({
       weekStart: startDate,
       weekEnd: endDate,
@@ -167,7 +192,7 @@ exports.getWeeklyReport = async (req, res) => {
         return adminAgg[0]?.total || 0;
       })(),
       averageFare: completed.length > 0 ? totalRevenue / completed.length : 0,
-      topDrivers: topDriversAgg,
+      topDrivers,
       rideDetails
     });
   } catch (e) {
@@ -177,8 +202,17 @@ exports.getWeeklyReport = async (req, res) => {
 
 exports.getMonthlyReport = async (req, res) => {
   try {
-    const { month, year } = req.query;
-    const { start: startDate, end: endDate, inclusiveEnd } = buildTimeRange('monthly', { month, year });
+    const { month, year, targetMonth } = req.query;
+    // Support legacy 'targetMonth' like 2025-9 as month/year
+    let m = month, y = year;
+    if (!m && targetMonth) {
+      const parts = String(targetMonth).split('-');
+      if (parts.length >= 2) {
+        y = y || parts[0];
+        m = m || parts[1];
+      }
+    }
+    const { start: startDate, end: endDate, inclusiveEnd } = buildTimeRange('monthly', { month: m, year: y });
     const commissionRate = Number(process.env.COMMISSION_RATE || 15);
 
     const rides = await Booking.find({ status: 'completed', completedAt: inclusiveEnd ? { $gte: startDate, $lte: endDate } : { $gte: startDate, $lt: endDate } }).populate('driverId passengerId').lean();
@@ -241,8 +275,8 @@ exports.getMonthlyReport = async (req, res) => {
     ]);
 
     res.json({
-      month: targetMonth,
-      year: targetYear,
+      month: Number(m || (new Date(startDate).getMonth() + 1)),
+      year: Number(y || new Date(startDate).getFullYear()),
       totalRides: rides.length,
       totalRevenue,
       totalCommission: adminAgg[0]?.total || 0,
