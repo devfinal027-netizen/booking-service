@@ -102,10 +102,17 @@ module.exports = (io, socket) => {
       socket.join(bookingRoom);
       // Build passenger payload for created event
       let passengerPayload = { id: String(passengerId) };
+      // Prefer passenger token meta when requester is passenger
+      if (requesterType === 'passenger') {
+        const tokenName = socket.user && (socket.user.name || socket.user.fullName || socket.user.displayName);
+        const tokenPhone = socket.user && (socket.user.phone || socket.user.mobile || socket.user.phoneNumber || socket.user.msisdn);
+        const tokenEmail = socket.user && socket.user.email;
+        passengerPayload = { id: String(passengerId), ...(tokenName ? { name: tokenName } : {}), ...(tokenPhone ? { phone: tokenPhone } : {}), ...(tokenEmail ? { email: tokenEmail } : {}) };
+      }
       try {
-        if (booking.passengerName || booking.passengerPhone) {
-          passengerPayload = { id: String(passengerId), name: booking.passengerName, phone: booking.passengerPhone };
-        } else {
+        if (!passengerPayload.name && (booking.passengerName || booking.passengerPhone)) {
+          passengerPayload = { id: String(passengerId), name: booking.passengerName, phone: booking.passengerPhone, email: passengerPayload.email };
+        } else if (!passengerPayload.name || !passengerPayload.phone) {
           const { Passenger } = require('../models/userModels');
           const pdoc = await Passenger.findById(passengerId).select({ _id: 1, name: 1, phone: 1, email: 1 }).lean();
           if (pdoc) passengerPayload = { id: String(pdoc._id), name: pdoc.name, phone: pdoc.phone, email: pdoc.email };
@@ -201,10 +208,16 @@ module.exports = (io, socket) => {
           // Keep passenger format as original: { id, name, phone }
           // Use passenger’s meta (not admin’s) for driver payload
           let passengerForDriver = undefined;
+          if (requesterType === 'passenger') {
+            const tokenName = socket.user && (socket.user.name || socket.user.fullName || socket.user.displayName);
+            const tokenPhone = socket.user && (socket.user.phone || socket.user.mobile || socket.user.phoneNumber || socket.user.msisdn);
+            const tokenEmail = socket.user && socket.user.email;
+            passengerForDriver = { id: String(passengerId), ...(tokenName ? { name: tokenName } : {}), ...(tokenPhone ? { phone: tokenPhone } : {}), ...(tokenEmail ? { email: tokenEmail } : {}) };
+          }
           try {
             const { Passenger } = require('../models/userModels');
             const pdoc = await Passenger.findById(passengerId).select({ _id: 1, name: 1, phone: 1 }).lean();
-            if (pdoc) passengerForDriver = { id: String(pdoc._id), name: pdoc.name, phone: pdoc.phone };
+            if (pdoc) passengerForDriver = { id: String(pdoc._id), name: pdoc.name, phone: pdoc.phone, ...(passengerForDriver && passengerForDriver.email ? { email: passengerForDriver.email } : {}) };
           } catch (_) {}
           if (!passengerForDriver) {
             // Fallback to user service via token when available
