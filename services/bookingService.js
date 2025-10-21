@@ -479,8 +479,8 @@ async function assignDriver({ bookingId, driverId, dispatcherId, passengerId }) 
     const cooldownSec = Number(process.env.REASSIGN_COOLDOWN_SECONDS || 15);
     if (cooldownSec > 0) {
       const since = new Date(Date.now() - cooldownSec * 1000);
-      const recent = await BookingAssignment.findOne({ bookingId, createdAt: { $gte: since } })
-        .sort({ createdAt: -1 })
+      const recent = await BookingAssignment.findOne({ bookingId, updatedAt: { $gte: since } })
+        .sort({ updatedAt: -1 })
         .lean();
       if (recent) {
         const err = new Error(`Assignment cooldown active. Please wait ${cooldownSec}s before reassigning`);
@@ -504,7 +504,19 @@ async function assignDriver({ bookingId, driverId, dispatcherId, passengerId }) 
   } catch (e) {
     if (e && e.status) throw e;
   }
-  const assignment = await BookingAssignment.create({ bookingId, driverId: String(driverId), dispatcherId: String(dispatcherId), passengerId: String(passengerId || booking.passengerId) });
+  // Upsert single assignment row per booking (bookingId unique index) to avoid duplicate key errors
+  const assignment = await BookingAssignment.findOneAndUpdate(
+    { bookingId },
+    {
+      $set: {
+        driverId: String(driverId),
+        dispatcherId: String(dispatcherId),
+        passengerId: String(passengerId || booking.passengerId)
+      },
+      $setOnInsert: { bookingId }
+    },
+    { upsert: true, new: true }
+  );
   // Link driver but keep booking in 'requested' until the driver accepts via booking:accept
   booking.driverId = String(driverId);
   // Do NOT change status here; driver must accept to transition to 'accepted'
