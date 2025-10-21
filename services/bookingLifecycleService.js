@@ -196,6 +196,7 @@ async function completeTrip(bookingId, endLocation, options = {}) {
   // Use the live pricing from currentFare (updated during trip) as the base fare
   // This ensures consistency between what users see during the trip and the final charge
   let fare = booking.currentFare;
+  const enforceMaxFare = process.env.ENFORCE_MAX_FARE === '1';
   
   // Fallback: if currentFare is missing or invalid, use fareEstimated, then calculate from scratch
   if (!fare || !Number.isFinite(fare) || fare <= 0) {
@@ -226,27 +227,40 @@ async function completeTrip(bookingId, endLocation, options = {}) {
       fare = Math.max(fare, 0);
     }
   } else {
-    // Apply minimum/maximum fare constraints to the live pricing (skip DB lookup in test env without MONGO_URI)
-    try {
-      if (process.env.MONGO_URI) {
-        const pricing = await Pricing.findOne({ vehicleType: booking.vehicleType, isActive: true }).sort({ updatedAt: -1 });
-        if (pricing) {
-          const minimumFare = Number(pricing.minimumFare || 0);
-          const enforceMaxFare = process.env.ENFORCE_MAX_FARE === '1';
-          const maximumFare = enforceMaxFare ? Number(pricing.maximumFare || 0) : 0;
-          if (minimumFare > 0) fare = Math.max(fare, minimumFare);
-          if (enforceMaxFare && maximumFare > 0) fare = Math.min(fare, maximumFare);
+    let skipFurtherAdjustments = false;
+    // If max fare cap is disabled, recompute a fresh fare from distance/time and prefer it if higher
+    if (!enforceMaxFare) {
+      try {
+        const recomputed = await pricingService.calculateFare(distanceKm, waitingTimeMinutes, booking.vehicleType, surgeMultiplier, discount);
+        if (Number.isFinite(recomputed) && recomputed > fare) {
+          fare = recomputed;
+          skipFurtherAdjustments = true; // recomputed already includes surge/discount and no max cap
         }
-      }
-    } catch (_) {}
-    
-    // Apply surge multiplier and discount to the live pricing
-    const multiplier = Number(surgeMultiplier || 1);
-    if (Number.isFinite(multiplier) && multiplier > 0) {
-      fare = fare * multiplier;
+      } catch (_) {}
     }
-    fare -= Number(discount || 0);
-    fare = Math.max(fare, 0);
+
+    if (!skipFurtherAdjustments) {
+      // Apply minimum/maximum fare constraints to the live pricing (skip DB lookup in test env without MONGO_URI)
+      try {
+        if (process.env.MONGO_URI) {
+          const pricing = await Pricing.findOne({ vehicleType: booking.vehicleType, isActive: true }).sort({ updatedAt: -1 });
+          if (pricing) {
+            const minimumFare = Number(pricing.minimumFare || 0);
+            const maximumFare = enforceMaxFare ? Number(pricing.maximumFare || 0) : 0;
+            if (minimumFare > 0) fare = Math.max(fare, minimumFare);
+            if (enforceMaxFare && maximumFare > 0) fare = Math.min(fare, maximumFare);
+          }
+        }
+      } catch (_) {}
+      
+      // Apply surge multiplier and discount to the live pricing
+      const multiplier = Number(surgeMultiplier || 1);
+      if (Number.isFinite(multiplier) && multiplier > 0) {
+        fare = fare * multiplier;
+      }
+      fare -= Number(discount || 0);
+      fare = Math.max(fare, 0);
+    }
   }
   // Get per-driver commission rate set by admin; fallback to env default
   let commissionRate = Number(process.env.COMMISSION_RATE || 15);
