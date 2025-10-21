@@ -124,11 +124,33 @@ exports.assign = async (req, res) => {
   try {
     const bookingId = req.params.id;
     const { driverId, dispatcherId, passengerId } = req.body;
-    try { logger.info('[route] POST /v1/bookings/:id/assign', { by: req.user && req.user.id, role: req.user && req.user.type, bookingId, driverId, dispatcherId, passengerId }); } catch (_) {}
+    // Audit log entry with dispatcherId and context
+    try { logger.info('[route] POST /v1/bookings/:id/assign', { by: req.user && req.user.id, role: req.user && req.user.type, bookingId, driverId, dispatcherId, passengerId, ip: req.ip, ua: req.headers['user-agent'] }); } catch (_) {}
     if (!driverId) return res.status(400).json({ message: 'Driver ID is required for assignment' });
     if (!dispatcherId) return res.status(400).json({ message: 'Dispatcher ID is required for assignment' });
     const result = await bookingService.assignDriver({ bookingId, driverId, dispatcherId, passengerId });
     bookingEvents.emitBookingAssigned(String(bookingId), String(driverId));
+    // Emit booking:update snapshot so UIs hydrate immediately
+    try {
+      const b = result && result.booking;
+      if (b) {
+        const payload = {
+          id: String(b._id),
+          bookingId: String(b._id),
+          status: b.status,
+          driverId: String(b.driverId),
+          passengerId: String(b.passengerId),
+          acceptedAt: b.acceptedAt,
+          vehicleType: b.vehicleType,
+          pickup: b.pickup,
+          dropoff: b.dropoff,
+          fareEstimated: b.fareEstimated,
+          currentFare: b.currentFare,
+          distanceKm: b.distanceKm
+        };
+        bookingEvents.emitBookingUpdate(String(b._id), payload);
+      }
+    } catch (_) {}
     try {
       const b = result && result.booking;
       logger.info('[assign] success', {

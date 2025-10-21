@@ -474,6 +474,23 @@ async function assignDriver({ bookingId, driverId, dispatcherId, passengerId }) 
     err.status = 400;
     throw err;
   }
+  // Rate-limit reassignment attempts to prevent flapping
+  try {
+    const cooldownSec = Number(process.env.REASSIGN_COOLDOWN_SECONDS || 15);
+    if (cooldownSec > 0) {
+      const since = new Date(Date.now() - cooldownSec * 1000);
+      const recent = await BookingAssignment.findOne({ bookingId, createdAt: { $gte: since } })
+        .sort({ createdAt: -1 })
+        .lean();
+      if (recent) {
+        const err = new Error(`Assignment cooldown active. Please wait ${cooldownSec}s before reassigning`);
+        err.status = 429;
+        throw err;
+      }
+    }
+  } catch (e) {
+    if (e && e.status) throw e;
+  }
   // Finance rule: check driver's package balance before assignment
   try {
     const wallet = await Wallet.findOne({ userId: String(driverId), role: 'driver' });
