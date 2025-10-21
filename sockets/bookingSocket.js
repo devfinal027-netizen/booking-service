@@ -100,7 +100,40 @@ module.exports = (io, socket) => {
       } catch (_) {}
       const bookingRoom = `booking:${String(booking._id)}`;
       socket.join(bookingRoom);
-      const createdPayload = { id: String(booking._id), bookingId: String(booking._id) };
+      // Build passenger payload for created event
+      let passengerPayload = { id: String(passengerId) };
+      try {
+        if (booking.passengerName || booking.passengerPhone) {
+          passengerPayload = { id: String(passengerId), name: booking.passengerName, phone: booking.passengerPhone };
+        } else {
+          const { Passenger } = require('../models/userModels');
+          const pdoc = await Passenger.findById(passengerId).select({ _id: 1, name: 1, phone: 1, email: 1 }).lean();
+          if (pdoc) passengerPayload = { id: String(pdoc._id), name: pdoc.name, phone: pdoc.phone, email: pdoc.email };
+        }
+      } catch (_) {}
+      // Best-effort enrichment for email via user service
+      if (!passengerPayload.email) {
+        try {
+          const { getPassengerById } = require('../integrations/userServiceClient');
+          const info = await getPassengerById(String(passengerId), { headers: socket.authToken ? { Authorization: socket.authToken } : undefined });
+          if (info) passengerPayload = { id: String(passengerId), name: info.name || passengerPayload.name, phone: info.phone || passengerPayload.phone, email: info.email };
+        } catch (_) {}
+      }
+
+      const createdPayload = {
+        id: String(booking._id),
+        bookingId: String(booking._id),
+        status: booking.status,
+        passenger: passengerPayload,
+        vehicleType: booking.vehicleType,
+        pickup: booking.pickup,
+        dropoff: booking.dropoff,
+        distanceKm: booking.distanceKm,
+        fareEstimated: booking.fareEstimated,
+        currentFare: booking.currentFare,
+        createdAt: booking.createdAt,
+        updatedAt: booking.updatedAt
+      };
       try { logger.info('[socket->passenger] booking:created', { sid: socket.id, userId: socket.user && socket.user.id, bookingId: createdPayload.bookingId }); } catch (_) {}
       socket.emit('booking:created', createdPayload);
       // Ops metric: mark timestamp at booking:created for dispatch latency measurement

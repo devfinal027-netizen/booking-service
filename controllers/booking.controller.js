@@ -52,17 +52,23 @@ exports.adminCreate = async (req, res) => {
       // Enrich passenger meta for admin-created bookings
       skipPassengerMeta: false
     });
-    // Enrich response with passenger email via user service when available
+    // Enrich response with passenger info; prefer DB, then user service, then booking name/phone
     let passengerResp = undefined;
     try {
-      const headers = req.headers && req.headers.authorization ? { Authorization: req.headers.authorization } : undefined;
-      const { getPassengerById } = require('../integrations/userServiceClient');
-      const info = await getPassengerById(String(passengerId), { headers });
-      if (info) passengerResp = { id: String(passengerId), name: info.name, phone: info.phone, email: info.email };
-    } catch (_) {
-      if (booking.passengerName || booking.passengerPhone) {
-        passengerResp = { id: String(passengerId), name: booking.passengerName, phone: booking.passengerPhone };
-      }
+      const { Passenger } = require('../models/userModels');
+      const pdoc = await Passenger.findById(String(passengerId)).select({ _id: 1, name: 1, phone: 1, email: 1 }).lean();
+      if (pdoc) passengerResp = { id: String(pdoc._id), name: pdoc.name, phone: pdoc.phone, email: pdoc.email };
+    } catch (_) {}
+    if (!passengerResp) {
+      try {
+        const headers = req.headers && req.headers.authorization ? { Authorization: req.headers.authorization } : undefined;
+        const { getPassengerById } = require('../integrations/userServiceClient');
+        const info = await getPassengerById(String(passengerId), { headers });
+        if (info) passengerResp = { id: String(passengerId), name: info.name, phone: info.phone, email: info.email };
+      } catch (_) {}
+    }
+    if (!passengerResp && (booking.passengerName || booking.passengerPhone)) {
+      passengerResp = { id: String(passengerId), name: booking.passengerName, phone: booking.passengerPhone };
     }
     return res.status(201).json({
       id: String(booking._id),
