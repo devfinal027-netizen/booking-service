@@ -108,7 +108,7 @@
 
   /**
    * TripHistory Schema
-   * Logs lifecycle events for a booking.
+   * Logs lifecycle events for a booking and incremental travel metrics.
    */
   const TripHistorySchema = new mongoose.Schema(
     {
@@ -125,10 +125,17 @@
         required: true,
       },
 
+      // Incremental aggregates for performance
+      distanceAccumulatedKm: { type: Number, default: 0 },
+      movingMinutes: { type: Number, default: 0 },
+      waitingMinutes: { type: Number, default: 0 },
+
+      // Retain legacy summary fields for compatibility/analytics
       fare: { type: Number },
       distance: { type: Number },
       duration: { type: Number },
 
+      // High-level locations
       pickupLocation: {
         latitude: Number,
         longitude: Number,
@@ -140,6 +147,27 @@
         address: String,
       },
 
+      // Detailed breadcrumb trail (sampled)
+      locations: [
+        new mongoose.Schema(
+          {
+            lat: Number,
+            // Accept both lon and lng for compatibility with existing code
+            lon: Number,
+            lng: Number,
+            timestamp: Date,
+            speed: Number,
+            source: String,
+          },
+          { _id: false }
+        ),
+      ],
+
+      // Canonical timestamps used throughout services
+      startedAt: { type: Date },
+      completedAt: { type: Date },
+
+      // Legacy timestamp fields retained for compatibility
       startTime: { type: Date },
       endTime: { type: Date },
       dateOfTravel: { type: Date, default: Date.now },
@@ -147,6 +175,10 @@
     },
     { timestamps: true }
   );
+
+  // Indexes to speed up common queries
+  TripHistorySchema.index({ bookingId: 1 });
+  TripHistorySchema.index({ 'locations.timestamp': 1 });
 
   TripHistorySchema.set('toJSON', {
     virtuals: true,

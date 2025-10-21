@@ -474,6 +474,23 @@ async function assignDriver({ bookingId, driverId, dispatcherId, passengerId }) 
     err.status = 400;
     throw err;
   }
+  // Rate-limit reassignment attempts to prevent flapping
+  try {
+    const cooldownSec = Number(process.env.REASSIGN_COOLDOWN_SECONDS || 15);
+    if (cooldownSec > 0) {
+      const since = new Date(Date.now() - cooldownSec * 1000);
+      const recent = await BookingAssignment.findOne({ bookingId, updatedAt: { $gte: since } })
+        .sort({ updatedAt: -1 })
+        .lean();
+      if (recent) {
+        const err = new Error(`Assignment cooldown active. Please wait ${cooldownSec}s before reassigning`);
+        err.status = 429;
+        throw err;
+      }
+    }
+  } catch (e) {
+    if (e && e.status) throw e;
+  }
   // Finance rule: check driver's package balance before assignment
   try {
     const wallet = await Wallet.findOne({ userId: String(driverId), role: 'driver' });
@@ -487,12 +504,24 @@ async function assignDriver({ bookingId, driverId, dispatcherId, passengerId }) 
   } catch (e) {
     if (e && e.status) throw e;
   }
-  const assignment = await BookingAssignment.create({ bookingId, driverId: String(driverId), dispatcherId: String(dispatcherId), passengerId: String(passengerId || booking.passengerId) });
+  // Upsert single assignment row per booking (bookingId unique index) to avoid duplicate key errors
+  const assignment = await BookingAssignment.findOneAndUpdate(
+    { bookingId },
+    {
+      $set: {
+        driverId: String(driverId),
+        dispatcherId: String(dispatcherId),
+        passengerId: String(passengerId || booking.passengerId)
+      },
+      $setOnInsert: { bookingId }
+    },
+    { upsert: true, new: true }
+  );
+  // Link driver but keep booking in 'requested' until the driver accepts via booking:accept
   booking.driverId = String(driverId);
-  booking.status = 'accepted';
-  booking.acceptedAt = new Date();
+  // Do NOT change status here; driver must accept to transition to 'accepted'
+  // Do NOT flip driver availability here; driver may decline
   await booking.save();
-  await Driver.findByIdAndUpdate(driverId, { available: false });
   return { booking, assignment };
 }
 

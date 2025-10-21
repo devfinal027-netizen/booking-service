@@ -618,6 +618,19 @@ try {
             }
           }
 
+          // Persist to TripHistory.locations for active bookings (original style)
+          try {
+            const lifecycle = require('../services/bookingLifecycleService');
+            const persistOps = activeBookings.map((booking) =>
+              lifecycle.updateTripLocation(String(booking._id), driverDbId, { latitude: data.latitude, longitude: data.longitude })
+            );
+            if (persistOps.length) {
+              await Promise.allSettled(persistOps);
+            }
+          } catch (persistErr) {
+            try { logger.warn('[socket->driver] trip history persist failed', { error: persistErr && persistErr.message }); } catch (_) {}
+          }
+
           for (const payloadEntry of payloads) {
             emitBookingTargets(
               {
@@ -631,7 +644,7 @@ try {
             );
           }
 
-          // Trigger ETA broadcast only for ongoing trips (guarded inside service as well)
+          // Trigger ETA broadcast only for ongoing trips (original behavior)
           try {
             const { calculateAndBroadcastEta } = require('../services/bookingPricingService');
             const { getIo } = require('./utils');

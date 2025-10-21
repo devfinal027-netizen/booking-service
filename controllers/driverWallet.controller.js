@@ -154,7 +154,46 @@ exports.adminListWallets = async (req, res) => {
       }
     } catch (_) {}
 
-    return res.json({ items: enriched, page, pageSize, total });
+    // Ensure totalEarnings exists and embed driver fields directly in wallet objects
+    let itemsOut = [];
+    try {
+      // Prefer net earnings from DriverEarnings; fallback to credits
+      const driverIds = enriched.map(w => String(w.userId));
+      const { DriverEarnings } = require('../models/commission');
+      const netAgg = await DriverEarnings.aggregate([
+        { $match: { driverId: { $in: driverIds } } },
+        { $group: { _id: '$driverId', total: { $sum: '$netEarnings' } } }
+      ]);
+      const netMap = Object.fromEntries(netAgg.map(r => [String(r._id), Number(r.total || 0)]));
+      const creditAgg = await Transaction.aggregate([
+        { $match: { userId: { $in: driverIds }, role: 'driver', type: 'credit', status: 'success' } },
+        { $group: { _id: '$userId', total: { $sum: '$amount' } } }
+      ]);
+      const creditsMap = Object.fromEntries(creditAgg.map(r => [String(r._id), Number(r.total || 0)]));
+
+      itemsOut = enriched.map(w => {
+        const { user, ...rest } = w;
+        let out = { ...rest };
+        let total = netMap[String(out.userId)];
+        if (!Number.isFinite(Number(total)) || total <= 0) {
+          total = creditsMap[String(out.userId)] || 0;
+        }
+        out.totalEarnings = Number(total || 0);
+        const d = user || {};
+        out = { ...out, id: d.id || String(out.userId) };
+        if (d.name) out.name = d.name;
+        if (d.phone) out.phone = d.phone;
+        if (d.email) out.email = d.email;
+        return out;
+      });
+    } catch (_) {
+      itemsOut = enriched.map(w => {
+        const { user, ...rest } = w;
+        return { ...rest, id: user?.id || String(rest.userId), totalEarnings: Number(rest.totalEarnings || 0) };
+      });
+    }
+
+    return res.json({ items: itemsOut, page, pageSize, total });
   } catch (e) { return res.status(500).json({ message: e.message }); }
 };
 
@@ -167,33 +206,54 @@ exports.adminGetDriverWallet = async (req, res) => {
       Wallet.findOne({ userId: driverId, role: 'driver' }).lean(),
       Transaction.find({ userId: driverId, role: 'driver' }).sort({ createdAt: -1 }).limit(limit).lean(),
     ]);
-    // Attach driver user info: prefer local DB (by _id or externalId), else external service as fallback
-    let user;
+    // Compute driver details (name, phone, email) from local DB or external service
+    let driver = undefined;
     try {
       const { Driver } = require('../models/userModels');
-      const { Types } = require('mongoose');
-      if (Types.ObjectId.isValid(driverId)) {
-        const d = await Driver.findById(driverId).select({ _id: 1, name: 1, phone: 1, email: 1 }).lean();
-        if (d) user = { id: String(d._id), name: d.name, phone: d.phone, email: d.email };
-      }
-      if (!user) {
-        const d = await Driver.findOne({ externalId: String(driverId) }).select({ _id: 1, name: 1, phone: 1, email: 1, externalId: 1 }).lean();
-        if (d) user = { id: String(d._id), name: d.name, phone: d.phone, email: d.email, externalId: String(d.externalId) };
+      // Driver _id is a string in this codebase
+      const d = await Driver.findById(driverId).select({ _id: 1, name: 1, phone: 1, email: 1 }).lean();
+      if (d) driver = { id: String(d._id), name: d.name, phone: d.phone, email: d.email };
+      if (!driver) {
+        const de = await Driver.findOne({ externalId: String(driverId) }).select({ _id: 1, name: 1, phone: 1, email: 1, externalId: 1 }).lean();
+        if (de) driver = { id: String(de._id), name: de.name, phone: de.phone, email: de.email, externalId: String(de.externalId) };
       }
     } catch (_) {}
-    if (!user) {
+    if (!driver) {
       try {
         const { getDriverById } = require('../integrations/userServiceClient');
-        // Try with caller token first
         const headers = req.headers && req.headers.authorization ? { Authorization: req.headers.authorization } : undefined;
-        let info = await getDriverById(driverId, { headers });
-        if ((!info || !info.name || !info.phone) && process.env.AUTH_SERVICE_BEARER) {
-          // Fallback to service bearer if user token lacks permission
-          info = await getDriverById(driverId, { headers: undefined });
-        }
-        if (info) user = { id: String(info.id), name: info.name, phone: info.phone, email: info.email };
+        const info = await getDriverById(driverId, { headers });
+        if (info) driver = { id: String(info.id), name: info.name, phone: info.phone, email: info.email };
       } catch (_) {}
     }
-    return res.json({ wallet: wallet || { userId: driverId, role: 'driver', balance: 0, totalEarnings: 0, currency: 'ETB' }, user: user || { id: driverId }, transactions: txs });
+
+    // Ensure wallet.totalEarnings reflects actual earnings (prefer DriverEarnings.netEarnings; fallback to credits)
+    let walletOut = wallet || { userId: driverId, role: 'driver', balance: 0, currency: 'ETB' };
+    try {
+      // Net earnings from completed trips
+      const { DriverEarnings } = require('../models/commission');
+      const netAgg = await DriverEarnings.aggregate([
+        { $match: { driverId: driverId } },
+        { $group: { _id: null, total: { $sum: '$netEarnings' } } }
+      ]);
+      const netTotal = Number(netAgg[0]?.total || 0);
+      let total = netTotal;
+      if (!Number.isFinite(total) || total <= 0) {
+        const creditAgg = await Transaction.aggregate([
+          { $match: { userId: driverId, role: 'driver', type: 'credit', status: 'success' } },
+          { $group: { _id: null, total: { $sum: '$amount' } } }
+        ]);
+        total = Number(creditAgg[0]?.total || 0);
+      }
+      walletOut = { ...walletOut, totalEarnings: Number(total || 0) };
+    } catch (_) {
+      if (!Number.isFinite(Number(walletOut.totalEarnings))) walletOut = { ...walletOut, totalEarnings: 0 };
+    }
+
+    const walletWithDriver = {
+      ...walletOut,
+      ...(driver ? { id: driver.id, name: driver.name, phone: driver.phone, email: driver.email } : { id: driverId })
+    };
+    return res.json({ wallet: walletWithDriver, transactions: txs });
   } catch (e) { return res.status(500).json({ message: e.message }); }
 };

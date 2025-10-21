@@ -85,7 +85,8 @@ module.exports = (io, socket) => {
       }
       const booking = await bookingService.createBooking({
         passengerId,
-        jwtUser: socket.user,
+        // Ensure passenger meta is fetched for admin-created bookings
+        jwtUser: requesterType === 'admin' || requesterType === 'superadmin' ? null : socket.user,
         vehicleType: data.vehicleType || 'mini',
         pickup: data.pickup,
         dropoff: data.dropoff,
@@ -99,9 +100,51 @@ module.exports = (io, socket) => {
       } catch (_) {}
       const bookingRoom = `booking:${String(booking._id)}`;
       socket.join(bookingRoom);
-      const createdPayload = { id: String(booking._id), bookingId: String(booking._id) };
+      // Build passenger payload for created event
+      let passengerPayload = { id: String(passengerId) };
+      // Prefer passenger token meta when requester is passenger
+      if (requesterType === 'passenger') {
+        const tokenName = socket.user && (socket.user.name || socket.user.fullName || socket.user.displayName);
+        const tokenPhone = socket.user && (socket.user.phone || socket.user.mobile || socket.user.phoneNumber || socket.user.msisdn);
+        const tokenEmail = socket.user && socket.user.email;
+        passengerPayload = { id: String(passengerId), ...(tokenName ? { name: tokenName } : {}), ...(tokenPhone ? { phone: tokenPhone } : {}), ...(tokenEmail ? { email: tokenEmail } : {}) };
+      }
+      try {
+        if (!passengerPayload.name && (booking.passengerName || booking.passengerPhone)) {
+          passengerPayload = { id: String(passengerId), name: booking.passengerName, phone: booking.passengerPhone, email: passengerPayload.email };
+        } else if (!passengerPayload.name || !passengerPayload.phone) {
+          const { Passenger } = require('../models/userModels');
+          const pdoc = await Passenger.findById(passengerId).select({ _id: 1, name: 1, phone: 1, email: 1 }).lean();
+          if (pdoc) passengerPayload = { id: String(pdoc._id), name: pdoc.name, phone: pdoc.phone, email: pdoc.email };
+        }
+      } catch (_) {}
+      // Best-effort enrichment for email via user service
+      if (!passengerPayload.email) {
+        try {
+          const { getPassengerById } = require('../integrations/userServiceClient');
+          const info = await getPassengerById(String(passengerId), { headers: socket.authToken ? { Authorization: socket.authToken } : undefined });
+          if (info) passengerPayload = { id: String(passengerId), name: info.name || passengerPayload.name, phone: info.phone || passengerPayload.phone, email: info.email };
+        } catch (_) {}
+      }
+
+      const createdPayload = {
+        id: String(booking._id),
+        bookingId: String(booking._id),
+        status: booking.status,
+        passenger: passengerPayload,
+        vehicleType: booking.vehicleType,
+        pickup: booking.pickup,
+        dropoff: booking.dropoff,
+        distanceKm: booking.distanceKm,
+        fareEstimated: booking.fareEstimated,
+        currentFare: booking.currentFare,
+        createdAt: booking.createdAt,
+        updatedAt: booking.updatedAt
+      };
       try { logger.info('[socket->passenger] booking:created', { sid: socket.id, userId: socket.user && socket.user.id, bookingId: createdPayload.bookingId }); } catch (_) {}
       socket.emit('booking:created', createdPayload);
+      // Ops metric: mark timestamp at booking:created for dispatch latency measurement
+      const createdAckAtMs = Date.now();
 
       // Select the nearest driver who can accept (has sufficient package balance)
       try {
@@ -163,12 +206,31 @@ module.exports = (io, socket) => {
 
         if (targetDrivers && targetDrivers.length) {
           // Keep passenger format as original: { id, name, phone }
-          let passengerForDriver = { id: passengerId, name: socket.user.name, phone: socket.user.phone };
+          // Use passenger’s meta (not admin’s) for driver payload
+          let passengerForDriver = undefined;
+          if (requesterType === 'passenger') {
+            const tokenName = socket.user && (socket.user.name || socket.user.fullName || socket.user.displayName);
+            const tokenPhone = socket.user && (socket.user.phone || socket.user.mobile || socket.user.phoneNumber || socket.user.msisdn);
+            const tokenEmail = socket.user && socket.user.email;
+            passengerForDriver = { id: String(passengerId), ...(tokenName ? { name: tokenName } : {}), ...(tokenPhone ? { phone: tokenPhone } : {}), ...(tokenEmail ? { email: tokenEmail } : {}) };
+          }
           try {
             const { Passenger } = require('../models/userModels');
             const pdoc = await Passenger.findById(passengerId).select({ _id: 1, name: 1, phone: 1 }).lean();
-            if (pdoc) passengerForDriver = { id: String(pdoc._id), name: pdoc.name, phone: pdoc.phone };
+            if (pdoc) passengerForDriver = { id: String(pdoc._id), name: pdoc.name, phone: pdoc.phone, ...(passengerForDriver && passengerForDriver.email ? { email: passengerForDriver.email } : {}) };
           } catch (_) {}
+          if (!passengerForDriver) {
+            // Fallback to user service via token when available
+            try {
+              const { getPassengerById } = require('../integrations/userServiceClient');
+              const info = await getPassengerById(String(passengerId), { headers: socket.authToken ? { Authorization: socket.authToken } : undefined });
+              if (info) passengerForDriver = { id: String(passengerId), name: info.name, phone: info.phone, email: info.email };
+            } catch (_) {}
+          }
+          if (!passengerForDriver) {
+            // Last resort: minimal id only
+            passengerForDriver = { id: String(passengerId) };
+          }
 
           const bookingDetails = {
             id: String(booking._id),
@@ -197,6 +259,7 @@ module.exports = (io, socket) => {
           // Also prepare a broadcast payload for the shared 'drivers' room as a fallback delivery channel
           const payloadForDriversRoom = { id: String(booking._id), bookingId: String(booking._id), booking: bookingDetails, patch };
           let sentCount = 0;
+          let firstSentLatencyMs = null;
           for (const drv of targetDrivers) {
             const driverId = String(drv._id);
             // Do not attach extra fields; keep original format
@@ -207,9 +270,13 @@ module.exports = (io, socket) => {
               try { io.to(channel).emit('booking:nearby', { init: false, driverId, bookings: [bookingDetails], currentBookings: [], user: { id: driverId, type: 'driver' } }); } catch (_) {}
               markDispatched(String(booking._id), driverId);
               sentCount++;
+              if (firstSentLatencyMs == null && Number.isFinite(createdAckAtMs)) {
+                firstSentLatencyMs = Math.max(0, Date.now() - createdAckAtMs);
+              }
             }
           }
-            const usedFallback = sentCount === 0;
+            const disableFallback = process.env.DISPATCH_DISABLE_FALLBACK === '1';
+            const usedFallback = sentCount === 0 && !disableFallback;
             if (usedFallback) {
               // Fallback broadcast to all connected drivers only when no targeted delivery was possible
               try { io.to('drivers').emit('booking:new', payloadForDriversRoom); } catch (_) {}
@@ -226,6 +293,13 @@ module.exports = (io, socket) => {
               metrics.increment('dispatch.sent', sentCount, {
                 vehicleType: booking.vehicleType || 'unknown'
               });
+              if (firstSentLatencyMs != null) {
+                metrics.timing('dispatch.created_to_first_sent_ms', firstSentLatencyMs, {
+                  vehicleType: booking.vehicleType || 'unknown',
+                  targeted: targetDrivers.length
+                });
+                try { logger.info('[dispatch] created->first_sent latency', { bookingId: String(booking._id), ms: firstSentLatencyMs, targeted: targetDrivers.length }); } catch (_) {}
+              }
             } else {
               metrics.increment('dispatch.miss', 1, {
                 vehicleType: booking.vehicleType || 'unknown'
@@ -235,6 +309,15 @@ module.exports = (io, socket) => {
                     vehicleType: booking.vehicleType || 'unknown'
                   });
                 }
+            }
+            if (Number.isFinite(createdAckAtMs)) {
+              const doneLatency = Math.max(0, Date.now() - createdAckAtMs);
+              metrics.timing('dispatch.created_to_dispatch_done_ms', doneLatency, {
+                vehicleType: booking.vehicleType || 'unknown',
+                sent: sentCount,
+                targeted: targetDrivers.length
+              });
+              try { logger.info('[dispatch] created->dispatch_done latency', { bookingId: String(booking._id), ms: doneLatency, sent: sentCount, targeted: targetDrivers.length }); } catch (_) {}
             }
           } catch (_) {}
         } else {
@@ -508,6 +591,7 @@ module.exports = (io, socket) => {
       if (!booking.dropoff || booking.dropoff.latitude == null || booking.dropoff.longitude == null) {
         try { logger.warn('[trip:ongoing] dropoff missing; ETA will be skipped', { bookingId }); } catch (_) {}
       }
+      // Redirect to unified persist function
       const point = await lifecycle.updateTripLocation(bookingId, String(socket.user.id), location);
       bookingEvents.emitTripOngoing({ _id: booking._id, driverId: booking.driverId, passengerId: booking.passengerId }, point);
       try { logger.info('[socket->room] trip:ongoing', { bookingId, lat: point.lat, lon: point.lng }); } catch (_) {}

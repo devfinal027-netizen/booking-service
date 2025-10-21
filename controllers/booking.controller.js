@@ -49,12 +49,31 @@ exports.adminCreate = async (req, res) => {
       pickup,
       dropoff,
       authHeader: req.headers && req.headers.authorization ? { Authorization: req.headers.authorization } : undefined,
-      skipPassengerMeta: true
+      // Enrich passenger meta for admin-created bookings
+      skipPassengerMeta: false
     });
+    // Enrich response with passenger info; prefer DB, then user service, then booking name/phone
+    let passengerResp = undefined;
+    try {
+      const { Passenger } = require('../models/userModels');
+      const pdoc = await Passenger.findById(String(passengerId)).select({ _id: 1, name: 1, phone: 1, email: 1 }).lean();
+      if (pdoc) passengerResp = { id: String(pdoc._id), name: pdoc.name, phone: pdoc.phone, email: pdoc.email };
+    } catch (_) {}
+    if (!passengerResp) {
+      try {
+        const headers = req.headers && req.headers.authorization ? { Authorization: req.headers.authorization } : undefined;
+        const { getPassengerById } = require('../integrations/userServiceClient');
+        const info = await getPassengerById(String(passengerId), { headers });
+        if (info) passengerResp = { id: String(passengerId), name: info.name, phone: info.phone, email: info.email };
+      } catch (_) {}
+    }
+    if (!passengerResp && (booking.passengerName || booking.passengerPhone)) {
+      passengerResp = { id: String(passengerId), name: booking.passengerName, phone: booking.passengerPhone };
+    }
     return res.status(201).json({
       id: String(booking._id),
       passengerId: String(booking.passengerId),
-      passenger: (booking.passengerName || booking.passengerPhone) ? { id: String(booking.passengerId), name: booking.passengerName, phone: booking.passengerPhone } : undefined,
+      passenger: passengerResp,
       vehicleType: booking.vehicleType,
       pickup: booking.pickup,
       dropoff: booking.dropoff,
@@ -124,11 +143,33 @@ exports.assign = async (req, res) => {
   try {
     const bookingId = req.params.id;
     const { driverId, dispatcherId, passengerId } = req.body;
-    try { logger.info('[route] POST /v1/bookings/:id/assign', { by: req.user && req.user.id, role: req.user && req.user.type, bookingId, driverId, dispatcherId, passengerId }); } catch (_) {}
+    // Audit log entry with dispatcherId and context
+    try { logger.info('[route] POST /v1/bookings/:id/assign', { by: req.user && req.user.id, role: req.user && req.user.type, bookingId, driverId, dispatcherId, passengerId, ip: req.ip, ua: req.headers['user-agent'] }); } catch (_) {}
     if (!driverId) return res.status(400).json({ message: 'Driver ID is required for assignment' });
     if (!dispatcherId) return res.status(400).json({ message: 'Dispatcher ID is required for assignment' });
     const result = await bookingService.assignDriver({ bookingId, driverId, dispatcherId, passengerId });
     bookingEvents.emitBookingAssigned(String(bookingId), String(driverId));
+    // Emit booking:update snapshot so UIs hydrate immediately
+    try {
+      const b = result && result.booking;
+      if (b) {
+        const payload = {
+          id: String(b._id),
+          bookingId: String(b._id),
+          status: b.status,
+          driverId: String(b.driverId),
+          passengerId: String(b.passengerId),
+          acceptedAt: b.acceptedAt,
+          vehicleType: b.vehicleType,
+          pickup: b.pickup,
+          dropoff: b.dropoff,
+          fareEstimated: b.fareEstimated,
+          currentFare: b.currentFare,
+          distanceKm: b.distanceKm
+        };
+        bookingEvents.emitBookingUpdate(String(b._id), payload);
+      }
+    } catch (_) {}
     try {
       const b = result && result.booking;
       logger.info('[assign] success', {

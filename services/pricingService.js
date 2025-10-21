@@ -20,7 +20,8 @@ async function calculateFare(distanceKm, waitingTimeMinutes, vehicleType, surgeM
   const perMinute = Number(pricing.perMinute || 0);
   const waitingPerMinute = Number(pricing.waitingPerMinute || 0);
   const minimumFare = Number(pricing.minimumFare || 0);
-  const maximumFare = Number(pricing.maximumFare || 0);
+  const enforceMaxFare = process.env.ENFORCE_MAX_FARE === '1';
+  const maximumFare = enforceMaxFare ? Number(pricing.maximumFare || 0) : 0;
   const multiplierSource = surgeMultiplier != null ? surgeMultiplier : (pricing.surgeMultiplier || 1);
   let multiplier = Number(multiplierSource);
   if (!Number.isFinite(multiplier) || multiplier <= 0) {
@@ -38,7 +39,7 @@ async function calculateFare(distanceKm, waitingTimeMinutes, vehicleType, surgeM
   if (minimumFare > 0) {
     fare = Math.max(fare, minimumFare);
   }
-  if (maximumFare > 0) {
+  if (enforceMaxFare && maximumFare > 0) {
     fare = Math.min(fare, maximumFare);
   }
 

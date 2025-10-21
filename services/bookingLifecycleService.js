@@ -2,6 +2,26 @@ const { Booking } = require('../models/bookingModels');
 const TripHistory = require('../models/tripHistoryModel');
 const { Pricing } = require('../models/pricing');
 const { haversineKm } = require('../utils/distance');
+// Defensive require: fall back to simple Haversine-based implementation if utility missing
+const { computePathDistance } = (() => {
+  try {
+    return require('../utils/computePathDistance');
+  } catch (_) {
+    return {
+      computePathDistance(points) {
+        if (!Array.isArray(points) || points.length < 2) return 0;
+        let total = 0;
+        for (let i = 1; i < points.length; i++) {
+          const a = points[i - 1];
+          const b = points[i];
+          const seg = haversineKm({ latitude: a.lat, longitude: a.lng }, { latitude: b.lat, longitude: b.lng });
+          if (Number.isFinite(seg)) total += seg;
+        }
+        return total;
+      }
+    };
+  }
+})();
 const pricingService = require('./pricingService');
 const commissionService = require('./commissionService');
 const walletService = require('./walletService');
@@ -55,38 +75,70 @@ async function startTrip(bookingId, startLocation) {
 }
 
 async function updateTripLocation(bookingId, driverId, location) {
-  const point = { lat: Number(location.latitude), lng: Number(location.longitude), timestamp: new Date() };
+  const now = new Date();
+  const lat = Number(location.latitude);
+  const lon = Number(location.longitude);
+  const point = { lat, lng: lon, lon, timestamp: now };
+
+  // Fetch last point and current aggregates with minimal payload
+  let lastPoint = null;
+  try {
+    const prev = await TripHistory.findOne({ bookingId })
+      .select({ locations: { $slice: -1 }, distanceAccumulatedKm: 1, movingMinutes: 1, waitingMinutes: 1 })
+      .lean();
+    if (prev && Array.isArray(prev.locations) && prev.locations.length) {
+      lastPoint = prev.locations[0];
+    }
+  } catch (_) {}
+
+  let incDistanceKm = 0;
+  let incMovingMinutes = 0;
+  let incWaitingMinutes = 0;
+  if (lastPoint) {
+    // Compute segment metrics with gating rules
+    const from = { latitude: Number(lastPoint.lat), longitude: Number(lastPoint.lng ?? lastPoint.lon) };
+    const to = { latitude: lat, longitude: lon };
+    const segKm = haversineKm(from, to);
+    const meters = Number.isFinite(segKm) ? segKm * 1000 : NaN;
+    const t1 = lastPoint.timestamp ? new Date(lastPoint.timestamp).getTime() : undefined;
+    const t2 = now.getTime();
+    const dtSec = Number.isFinite(t1) ? Math.max(0, (t2 - t1) / 1000) : undefined;
+    const minMeters = Number(process.env.DIST_MIN_METERS || 10);
+    const minDt = Number(process.env.DIST_MIN_DT_SECONDS || 2);
+    const minSpeed = Number(process.env.DIST_MIN_SPEED_MPS || 0.3);
+    const speed = dtSec && dtSec > 0 ? meters / dtSec : undefined;
+    const passesDist = Number.isFinite(meters) && meters >= minMeters;
+    const passesTime = dtSec == null || dtSec >= minDt;
+    const passesSpeed = speed == null || speed >= minSpeed;
+    if (passesDist && passesTime && passesSpeed && Number.isFinite(segKm)) {
+      incDistanceKm = segKm;
+      if (dtSec) incMovingMinutes = dtSec / 60;
+    } else if (dtSec) {
+      incWaitingMinutes = dtSec / 60;
+    }
+  }
+
+  const updateDoc = {
+    $push: { locations: point },
+    $set: { status: 'ongoing', driverId },
+    $setOnInsert: { startedAt: now },
+  };
+  const inc = {};
+  if (incDistanceKm) inc.distanceAccumulatedKm = incDistanceKm;
+  if (incMovingMinutes) inc.movingMinutes = incMovingMinutes;
+  if (incWaitingMinutes) inc.waitingMinutes = incWaitingMinutes;
+  if (Object.keys(inc).length) updateDoc.$inc = inc;
+
   await TripHistory.findOneAndUpdate(
     { bookingId },
-    { $push: { locations: point } },
+    updateDoc,
     { upsert: true }
   );
   return point;
 }
 
 function computePathDistanceKm(locations) {
-  if (!Array.isArray(locations) || locations.length < 2) return 0;
-  let totalKm = 0;
-  for (let i = 1; i < locations.length; i++) {
-    const a = locations[i - 1];
-    const b = locations[i];
-    const segmentDistanceKm = haversineKm({ latitude: a.lat, longitude: a.lng }, { latitude: b.lat, longitude: b.lng });
-    const t1 = a.timestamp ? new Date(a.timestamp).getTime() : undefined;
-    const t2 = b.timestamp ? new Date(b.timestamp).getTime() : undefined;
-    const dtSec = (Number.isFinite(t1) && Number.isFinite(t2)) ? Math.max(0, (t2 - t1) / 1000) : undefined;
-
-    // Movement gating to suppress GPS drift
-    // Require: at least 5s between points, at least 25m, and speed >= 1 m/s
-    const minDistanceKm = 0.025; // 25 meters
-    const minDtSec = 5; // 5 seconds
-    const minSpeedMps = 1; // 1 meter/second
-    const speedMps = (dtSec && dtSec > 0) ? (segmentDistanceKm * 1000) / dtSec : 0;
-
-    if (dtSec != null && dtSec >= minDtSec && segmentDistanceKm >= minDistanceKm && speedMps >= minSpeedMps) {
-      totalKm += segmentDistanceKm;
-    }
-  }
-  return totalKm;
+  return computePathDistance(locations);
 }
 
 async function completeTrip(bookingId, endLocation, options = {}) {
@@ -144,6 +196,7 @@ async function completeTrip(bookingId, endLocation, options = {}) {
   // Use the live pricing from currentFare (updated during trip) as the base fare
   // This ensures consistency between what users see during the trip and the final charge
   let fare = booking.currentFare;
+  const enforceMaxFare = process.env.ENFORCE_MAX_FARE === '1';
   
   // Fallback: if currentFare is missing or invalid, use fareEstimated, then calculate from scratch
   if (!fare || !Number.isFinite(fare) || fare <= 0) {
@@ -151,19 +204,19 @@ async function completeTrip(bookingId, endLocation, options = {}) {
     if (!fare || !Number.isFinite(fare) || fare <= 0) {
       fare = await pricingService.calculateFare(distanceKm, waitingTimeMinutes, booking.vehicleType, surgeMultiplier, discount);
     } else {
-      // Apply minimum/maximum fare constraints to the initial estimate
-      const pricing = await Pricing.findOne({ vehicleType: booking.vehicleType, isActive: true }).sort({ updatedAt: -1 });
-      if (pricing) {
-        const minimumFare = Number(pricing.minimumFare || 0);
-        const maximumFare = Number(pricing.maximumFare || 0);
-        
-        if (minimumFare > 0) {
-          fare = Math.max(fare, minimumFare);
+      // Apply minimum/maximum fare constraints to the initial estimate (skip DB lookup in test env without MONGO_URI)
+      try {
+        if (process.env.MONGO_URI) {
+          const pricing = await Pricing.findOne({ vehicleType: booking.vehicleType, isActive: true }).sort({ updatedAt: -1 });
+          if (pricing) {
+            const minimumFare = Number(pricing.minimumFare || 0);
+            const enforceMaxFare = process.env.ENFORCE_MAX_FARE === '1';
+            const maximumFare = enforceMaxFare ? Number(pricing.maximumFare || 0) : 0;
+            if (minimumFare > 0) fare = Math.max(fare, minimumFare);
+            if (enforceMaxFare && maximumFare > 0) fare = Math.min(fare, maximumFare);
+          }
         }
-        if (maximumFare > 0) {
-          fare = Math.min(fare, maximumFare);
-        }
-      }
+      } catch (_) {}
       
       // Apply surge multiplier and discount to the initial estimate
       const multiplier = Number(surgeMultiplier || 1);
@@ -174,27 +227,40 @@ async function completeTrip(bookingId, endLocation, options = {}) {
       fare = Math.max(fare, 0);
     }
   } else {
-    // Apply minimum/maximum fare constraints to the live pricing
-    const pricing = await Pricing.findOne({ vehicleType: booking.vehicleType, isActive: true }).sort({ updatedAt: -1 });
-    if (pricing) {
-      const minimumFare = Number(pricing.minimumFare || 0);
-      const maximumFare = Number(pricing.maximumFare || 0);
+    let skipFurtherAdjustments = false;
+    // If max fare cap is disabled, recompute a fresh fare from distance/time and prefer it if higher
+    if (!enforceMaxFare) {
+      try {
+        const recomputed = await pricingService.calculateFare(distanceKm, waitingTimeMinutes, booking.vehicleType, surgeMultiplier, discount);
+        if (Number.isFinite(recomputed) && recomputed > fare) {
+          fare = recomputed;
+          skipFurtherAdjustments = true; // recomputed already includes surge/discount and no max cap
+        }
+      } catch (_) {}
+    }
+
+    if (!skipFurtherAdjustments) {
+      // Apply minimum/maximum fare constraints to the live pricing (skip DB lookup in test env without MONGO_URI)
+      try {
+        if (process.env.MONGO_URI) {
+          const pricing = await Pricing.findOne({ vehicleType: booking.vehicleType, isActive: true }).sort({ updatedAt: -1 });
+          if (pricing) {
+            const minimumFare = Number(pricing.minimumFare || 0);
+            const maximumFare = enforceMaxFare ? Number(pricing.maximumFare || 0) : 0;
+            if (minimumFare > 0) fare = Math.max(fare, minimumFare);
+            if (enforceMaxFare && maximumFare > 0) fare = Math.min(fare, maximumFare);
+          }
+        }
+      } catch (_) {}
       
-      if (minimumFare > 0) {
-        fare = Math.max(fare, minimumFare);
+      // Apply surge multiplier and discount to the live pricing
+      const multiplier = Number(surgeMultiplier || 1);
+      if (Number.isFinite(multiplier) && multiplier > 0) {
+        fare = fare * multiplier;
       }
-      if (maximumFare > 0) {
-        fare = Math.min(fare, maximumFare);
-      }
+      fare -= Number(discount || 0);
+      fare = Math.max(fare, 0);
     }
-    
-    // Apply surge multiplier and discount to the live pricing
-    const multiplier = Number(surgeMultiplier || 1);
-    if (Number.isFinite(multiplier) && multiplier > 0) {
-      fare = fare * multiplier;
-    }
-    fare -= Number(discount || 0);
-    fare = Math.max(fare, 0);
   }
   // Get per-driver commission rate set by admin; fallback to env default
   let commissionRate = Number(process.env.COMMISSION_RATE || 15);
@@ -250,7 +316,7 @@ async function completeTrip(bookingId, endLocation, options = {}) {
     }
   } catch (_) {}
   try {
-    if (adminUserId) await walletService.credit(adminUserId, commission, 'Commission from trip');
+    if (adminUserId && Number.isFinite(commission) && commission > 0) await walletService.credit(adminUserId, commission, 'Commission from trip');
   } catch (_) {}
   try {
     if (debitPassengerWallet && booking.passengerId) await walletService.debit(booking.passengerId, fare, 'Trip fare');
@@ -289,7 +355,8 @@ async function completeTrip(bookingId, endLocation, options = {}) {
       await DriverEarnings.create({
         driverId: String(booking.driverId),
         bookingId: booking._id,
-        tripDate: new Date(),
+        // Use the canonical completion time for all financial reports
+        tripDate: completedAt,
         grossFare: fare,
         commissionAmount: commission,
         netEarnings: driverEarnings,
@@ -298,7 +365,8 @@ async function completeTrip(bookingId, endLocation, options = {}) {
     }
     await AdminEarnings.create({
       bookingId: booking._id,
-      tripDate: new Date(),
+      // Use the canonical completion time for all financial reports
+      tripDate: completedAt,
       grossFare: fare,
       commissionEarned: commission,
       commissionPercentage: commissionRate,
