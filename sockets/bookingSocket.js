@@ -85,7 +85,8 @@ module.exports = (io, socket) => {
       }
       const booking = await bookingService.createBooking({
         passengerId,
-        jwtUser: socket.user,
+        // Ensure passenger meta is fetched for admin-created bookings
+        jwtUser: requesterType === 'admin' || requesterType === 'superadmin' ? null : socket.user,
         vehicleType: data.vehicleType || 'mini',
         pickup: data.pickup,
         dropoff: data.dropoff,
@@ -165,12 +166,25 @@ module.exports = (io, socket) => {
 
         if (targetDrivers && targetDrivers.length) {
           // Keep passenger format as original: { id, name, phone }
-          let passengerForDriver = { id: passengerId, name: socket.user.name, phone: socket.user.phone };
+          // Use passenger’s meta (not admin’s) for driver payload
+          let passengerForDriver = undefined;
           try {
             const { Passenger } = require('../models/userModels');
             const pdoc = await Passenger.findById(passengerId).select({ _id: 1, name: 1, phone: 1 }).lean();
             if (pdoc) passengerForDriver = { id: String(pdoc._id), name: pdoc.name, phone: pdoc.phone };
           } catch (_) {}
+          if (!passengerForDriver) {
+            // Fallback to user service via token when available
+            try {
+              const { getPassengerById } = require('../integrations/userServiceClient');
+              const info = await getPassengerById(String(passengerId), { headers: socket.authToken ? { Authorization: socket.authToken } : undefined });
+              if (info) passengerForDriver = { id: String(passengerId), name: info.name, phone: info.phone, email: info.email };
+            } catch (_) {}
+          }
+          if (!passengerForDriver) {
+            // Last resort: minimal id only
+            passengerForDriver = { id: String(passengerId) };
+          }
 
           const bookingDetails = {
             id: String(booking._id),

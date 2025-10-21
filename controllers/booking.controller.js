@@ -49,12 +49,25 @@ exports.adminCreate = async (req, res) => {
       pickup,
       dropoff,
       authHeader: req.headers && req.headers.authorization ? { Authorization: req.headers.authorization } : undefined,
-      skipPassengerMeta: true
+      // Enrich passenger meta for admin-created bookings
+      skipPassengerMeta: false
     });
+    // Enrich response with passenger email via user service when available
+    let passengerResp = undefined;
+    try {
+      const headers = req.headers && req.headers.authorization ? { Authorization: req.headers.authorization } : undefined;
+      const { getPassengerById } = require('../integrations/userServiceClient');
+      const info = await getPassengerById(String(passengerId), { headers });
+      if (info) passengerResp = { id: String(passengerId), name: info.name, phone: info.phone, email: info.email };
+    } catch (_) {
+      if (booking.passengerName || booking.passengerPhone) {
+        passengerResp = { id: String(passengerId), name: booking.passengerName, phone: booking.passengerPhone };
+      }
+    }
     return res.status(201).json({
       id: String(booking._id),
       passengerId: String(booking.passengerId),
-      passenger: (booking.passengerName || booking.passengerPhone) ? { id: String(booking.passengerId), name: booking.passengerName, phone: booking.passengerPhone } : undefined,
+      passenger: passengerResp,
       vehicleType: booking.vehicleType,
       pickup: booking.pickup,
       dropoff: booking.dropoff,
