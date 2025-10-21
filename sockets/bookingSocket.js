@@ -102,6 +102,8 @@ module.exports = (io, socket) => {
       const createdPayload = { id: String(booking._id), bookingId: String(booking._id) };
       try { logger.info('[socket->passenger] booking:created', { sid: socket.id, userId: socket.user && socket.user.id, bookingId: createdPayload.bookingId }); } catch (_) {}
       socket.emit('booking:created', createdPayload);
+      // Ops metric: mark timestamp at booking:created for dispatch latency measurement
+      const createdAckAtMs = Date.now();
 
       // Select the nearest driver who can accept (has sufficient package balance)
       try {
@@ -197,6 +199,7 @@ module.exports = (io, socket) => {
           // Also prepare a broadcast payload for the shared 'drivers' room as a fallback delivery channel
           const payloadForDriversRoom = { id: String(booking._id), bookingId: String(booking._id), booking: bookingDetails, patch };
           let sentCount = 0;
+          let firstSentLatencyMs = null;
           for (const drv of targetDrivers) {
             const driverId = String(drv._id);
             // Do not attach extra fields; keep original format
@@ -207,9 +210,13 @@ module.exports = (io, socket) => {
               try { io.to(channel).emit('booking:nearby', { init: false, driverId, bookings: [bookingDetails], currentBookings: [], user: { id: driverId, type: 'driver' } }); } catch (_) {}
               markDispatched(String(booking._id), driverId);
               sentCount++;
+              if (firstSentLatencyMs == null && Number.isFinite(createdAckAtMs)) {
+                firstSentLatencyMs = Math.max(0, Date.now() - createdAckAtMs);
+              }
             }
           }
-            const usedFallback = sentCount === 0;
+            const disableFallback = process.env.DISPATCH_DISABLE_FALLBACK === '1';
+            const usedFallback = sentCount === 0 && !disableFallback;
             if (usedFallback) {
               // Fallback broadcast to all connected drivers only when no targeted delivery was possible
               try { io.to('drivers').emit('booking:new', payloadForDriversRoom); } catch (_) {}
@@ -226,6 +233,13 @@ module.exports = (io, socket) => {
               metrics.increment('dispatch.sent', sentCount, {
                 vehicleType: booking.vehicleType || 'unknown'
               });
+              if (firstSentLatencyMs != null) {
+                metrics.timing('dispatch.created_to_first_sent_ms', firstSentLatencyMs, {
+                  vehicleType: booking.vehicleType || 'unknown',
+                  targeted: targetDrivers.length
+                });
+                try { logger.info('[dispatch] created->first_sent latency', { bookingId: String(booking._id), ms: firstSentLatencyMs, targeted: targetDrivers.length }); } catch (_) {}
+              }
             } else {
               metrics.increment('dispatch.miss', 1, {
                 vehicleType: booking.vehicleType || 'unknown'
@@ -235,6 +249,15 @@ module.exports = (io, socket) => {
                     vehicleType: booking.vehicleType || 'unknown'
                   });
                 }
+            }
+            if (Number.isFinite(createdAckAtMs)) {
+              const doneLatency = Math.max(0, Date.now() - createdAckAtMs);
+              metrics.timing('dispatch.created_to_dispatch_done_ms', doneLatency, {
+                vehicleType: booking.vehicleType || 'unknown',
+                sent: sentCount,
+                targeted: targetDrivers.length
+              });
+              try { logger.info('[dispatch] created->dispatch_done latency', { bookingId: String(booking._id), ms: doneLatency, sent: sentCount, targeted: targetDrivers.length }); } catch (_) {}
             }
           } catch (_) {}
         } else {
