@@ -505,11 +505,11 @@ async function assignDriver({ bookingId, driverId, dispatcherId, passengerId }) 
     if (e && e.status) throw e;
   }
   const assignment = await BookingAssignment.create({ bookingId, driverId: String(driverId), dispatcherId: String(dispatcherId), passengerId: String(passengerId || booking.passengerId) });
+  // Link driver but keep booking in 'requested' until the driver accepts via booking:accept
   booking.driverId = String(driverId);
-  booking.status = 'accepted';
-  booking.acceptedAt = new Date();
+  // Do NOT change status here; driver must accept to transition to 'accepted'
+  // Do NOT flip driver availability here; driver may decline
   await booking.save();
-  await Driver.findByIdAndUpdate(driverId, { available: false });
   return { booking, assignment };
 }
 
