@@ -24,19 +24,14 @@ async function createPaymentOption({ name, logo }) {
 async function setDriverPaymentPreference(driverId, paymentOptionId, options = {}) {
   const logger = require('../utils/logger');
   const opt = await PaymentOption.findById(paymentOptionId).lean();
-  if (!opt) {
-    const err = new Error('Payment option not found');
-    try { logger.warn('[payment] payment option not found', { paymentOptionId }); } catch (_) {}
-    err.status = 404;
-    throw err;
-  }
+  if (!opt) { const e = new Error('Payment option not found'); e.status = 404; throw e; }
 
   // Try update by internal id - add to paymentPreferences array if not already present
   let updated = await Driver.findByIdAndUpdate(
     String(driverId), 
     { $addToSet: { paymentPreferences: opt._id } }, 
     { new: true }
-  ).populate({ path: 'paymentPreferences', select: { name: 1, logo: 1 } });
+  );
 
   // Fallback: by externalId if internal id did not match
   if (!updated) {
@@ -47,7 +42,7 @@ async function setDriverPaymentPreference(driverId, paymentOptionId, options = {
         String(existingByExternal._id), 
         { $addToSet: { paymentPreferences: opt._id } }, 
         { new: true }
-      ).populate({ path: 'paymentPreferences', select: { name: 1, logo: 1 } });
+      );
     }
   }
 
@@ -76,7 +71,7 @@ async function setDriverPaymentPreference(driverId, paymentOptionId, options = {
           String(ext.id), 
           { $addToSet: { paymentPreferences: opt._id } }, 
           { new: true }
-        ).populate({ path: 'paymentPreferences', select: { name: 1, logo: 1 } });
+        );
       } else {
         try { logger.warn('[payment] user-service did not return driver', { driverId }); } catch (_) {}
       }
@@ -96,7 +91,7 @@ async function setDriverPaymentPreference(driverId, paymentOptionId, options = {
         $addToSet: { paymentPreferences: opt._id }
       },
       { new: true, upsert: true }
-    ).populate({ path: 'paymentPreferences', select: { name: 1, logo: 1 } });
+    );
   }
 
   if (!updated) {
@@ -111,19 +106,14 @@ async function setDriverPaymentPreference(driverId, paymentOptionId, options = {
 async function removeDriverPaymentPreference(driverId, paymentOptionId, options = {}) {
   const logger = require('../utils/logger');
   const opt = await PaymentOption.findById(paymentOptionId).lean();
-  if (!opt) {
-    const err = new Error('Payment option not found');
-    try { logger.warn('[payment] payment option not found', { paymentOptionId }); } catch (_) {}
-    err.status = 404;
-    throw err;
-  }
+  if (!opt) { const e = new Error('Payment option not found'); e.status = 404; throw e; }
 
   // Try update by internal id - remove from paymentPreferences array
   let updated = await Driver.findByIdAndUpdate(
     String(driverId), 
     { $pull: { paymentPreferences: opt._id } }, 
     { new: true }
-  ).populate({ path: 'paymentPreferences', select: { name: 1, logo: 1 } });
+  );
 
   // Fallback: by externalId if internal id did not match
   if (!updated) {
@@ -134,7 +124,7 @@ async function removeDriverPaymentPreference(driverId, paymentOptionId, options 
         String(existingByExternal._id), 
         { $pull: { paymentPreferences: opt._id } }, 
         { new: true }
-      ).populate({ path: 'paymentPreferences', select: { name: 1, logo: 1 } });
+      );
     }
   }
 

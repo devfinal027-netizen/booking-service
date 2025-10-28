@@ -22,14 +22,27 @@ function buildUrlFromTemplate(template, params) {
 
 function getAuthHeaders(tokenOrHeader) {
   const headers = { 'Accept': 'application/json' };
+  // Priority 1: explicit token/header passed by caller
   if (tokenOrHeader) {
     if (typeof tokenOrHeader === 'string') {
       headers['Authorization'] = tokenOrHeader.startsWith('Bearer ') ? tokenOrHeader : `Bearer ${tokenOrHeader}`;
-    } else if (typeof tokenOrHeader === 'object' && tokenOrHeader.Authorization) {
-      headers['Authorization'] = tokenOrHeader.Authorization;
+      return headers;
     }
-  } else if (process.env.AUTH_SERVICE_BEARER) {
-    headers['Authorization'] = `Bearer ${process.env.AUTH_SERVICE_BEARER}`;
+    if (typeof tokenOrHeader === 'object') {
+      if (tokenOrHeader.Authorization) headers['Authorization'] = tokenOrHeader.Authorization;
+      if (tokenOrHeader['X-Service-Token']) headers['X-Service-Token'] = tokenOrHeader['X-Service-Token'];
+      return headers;
+    }
+  }
+  // Priority 2: configured service-to-service auth
+  if (process.env.AUTH_SERVICE_BEARER) {
+    headers['Authorization'] = process.env.AUTH_SERVICE_BEARER.startsWith('Bearer ')
+      ? process.env.AUTH_SERVICE_BEARER
+      : `Bearer ${process.env.AUTH_SERVICE_BEARER}`;
+  } else if (process.env.SERVICE_API_TOKEN) {
+    // Auth service supports either Authorization: Bearer <token> or X-Service-Token
+    headers['Authorization'] = `Bearer ${process.env.SERVICE_API_TOKEN}`;
+    headers['X-Service-Token'] = process.env.SERVICE_API_TOKEN;
   }
   return headers;
 }

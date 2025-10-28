@@ -624,6 +624,20 @@ async function ratePassenger({ bookingId, driverId, rating, comment }) {
   booking.passengerRating = rating;
   if (comment) booking.passengerComment = comment;
   await booking.save();
+  // Update passenger aggregate rating locally
+  try {
+    const pid = String(booking.passengerId);
+    if (pid && mongoose.Types.ObjectId.isValid(pid)) {
+      const agg = await Booking.aggregate([
+        { $match: { passengerId: pid, passengerRating: { $gte: 1 } } },
+        { $group: { _id: '$passengerId', count: { $sum: 1 }, avg: { $avg: '$passengerRating' } } }
+      ]);
+      const avg = agg[0]?.avg;
+      if (Number.isFinite(avg)) {
+        await Passenger.findByIdAndUpdate(pid, { $set: { rating: Math.round(avg * 10) / 10, ratingCount: agg[0].count } });
+      }
+    }
+  } catch (_) {}
   return { booking, rating, comment };
 }
 
@@ -652,6 +666,20 @@ async function rateDriver({ bookingId, passengerId, rating, comment }) {
   booking.driverRating = rating;
   if (comment) booking.driverComment = comment;
   await booking.save();
+  // Update driver aggregate rating locally
+  try {
+    const did = String(booking.driverId);
+    if (did) {
+      const agg = await Booking.aggregate([
+        { $match: { driverId: did, driverRating: { $gte: 1 } } },
+        { $group: { _id: '$driverId', count: { $sum: 1 }, avg: { $avg: '$driverRating' } } }
+      ]);
+      const avg = agg[0]?.avg;
+      if (Number.isFinite(avg)) {
+        await Driver.findByIdAndUpdate(did, { $set: { rating: Math.round(avg * 10) / 10, ratingCount: agg[0].count } });
+      }
+    }
+  } catch (_) {}
   return { message: 'Driver rated successfully' };
 }
 
