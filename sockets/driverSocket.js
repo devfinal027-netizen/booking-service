@@ -83,6 +83,7 @@ module.exports = (io, socket) => {
             pickup: b.pickup,
             dropoff: b.dropoff,
             fareEstimated: b.fareEstimated,
+            currentFare: b.currentFare,
             fareFinal: b.fareFinal,
             distanceKm: b.distanceKm,
             passenger: b.passengerId ? { id: String(b.passengerId), name: b.passengerName, phone: b.passengerPhone } : undefined,
@@ -141,6 +142,7 @@ module.exports = (io, socket) => {
                     pickup: dispatchDoc.pickup,
                     dropoff: dispatchDoc.dropoff,
                     fareEstimated: dispatchDoc.fareEstimated,
+                    currentFare: dispatchDoc.currentFare,
                     fareFinal: dispatchDoc.fareFinal,
                     distanceKm: dispatchDoc.distanceKm,
                     createdAt: dispatchDoc.createdAt,
@@ -218,6 +220,7 @@ try {
       pickup: x.booking.pickup,
       dropoff: x.booking.dropoff,
       fareEstimated: x.booking.fareEstimated,
+      currentFare: x.booking.currentFare,
       fareFinal: x.booking.fareFinal,
       distanceKm: Math.round(x.distanceKm * 100) / 100,
       // Keep passenger format as original: { id, name, phone }
@@ -244,7 +247,8 @@ try {
 
             // --- START OF MODIFICATION ---
             // Fetch full driver details for active bookings to include carPlate and carColor
-            const driverIdsInActiveBookings = [...new Set(activeCurrentBookings.map(b => String(b.driverId)).filter(Boolean))];
+            // Ensure we exclude undefined driverIds to avoid querying with "undefined"
+            const driverIdsInActiveBookings = [...new Set(activeCurrentBookings.map(b => b.driverId).filter(Boolean).map(String))];
             let driverDetailsMap = {};
             if (driverIdsInActiveBookings.length > 0) {
               const drivers = await Driver.find({ _id: { $in: driverIdsInActiveBookings } })
@@ -414,6 +418,7 @@ try {
                 pickup: x.booking.pickup,
                 dropoff: x.booking.dropoff,
                 fareEstimated: x.booking.fareEstimated,
+                currentFare: x.booking.currentFare,
                 fareFinal: x.booking.fareFinal,
                 distanceKm: Math.round(x.distanceKm * 100) / 100,
                 passenger: x.booking.passengerId ? { id: String(x.booking.passengerId), name: x.booking.passengerName, phone: x.booking.passengerPhone } : undefined,

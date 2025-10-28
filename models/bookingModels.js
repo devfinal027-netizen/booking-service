@@ -39,7 +39,8 @@
       canceledReason: { type: String },
 
       // Fare details
-      fareEstimated: { type: Number },
+      fareEstimated: { type: Number }, // Initial estimate (pickup → dropoff)
+      currentFare: { type: Number }, // Live pricing during trip (pickup → current location + time)
       fareFinal: { type: Number },
       fareBreakdown: {
         base: Number,

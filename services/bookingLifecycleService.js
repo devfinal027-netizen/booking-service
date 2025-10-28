@@ -1,5 +1,6 @@
 const { Booking } = require('../models/bookingModels');
 const TripHistory = require('../models/tripHistoryModel');
+const { Pricing } = require('../models/pricing');
 const { haversineKm } = require('../utils/distance');
 const pricingService = require('./pricingService');
 const commissionService = require('./commissionService');
@@ -69,7 +70,11 @@ function computePathDistanceKm(locations) {
   for (let i = 1; i < locations.length; i++) {
     const a = locations[i - 1];
     const b = locations[i];
-    total += haversineKm({ latitude: a.lat, longitude: a.lng }, { latitude: b.lat, longitude: b.lng });
+    const segmentDistance = haversineKm({ latitude: a.lat, longitude: a.lng }, { latitude: b.lat, longitude: b.lng });
+    // Only count movements > 10 meters to filter GPS drift
+    if (segmentDistance > 0.01) { // 10 meters = 0.01 km
+      total += segmentDistance;
+    }
   }
   return total;
 }
@@ -126,7 +131,61 @@ async function completeTrip(bookingId, endLocation, options = {}) {
 
   const waitingTimeMinutes = Math.max(0, Math.round(((completedAt - new Date(startedAt)) / 60000)));
 
-  const fare = await pricingService.calculateFare(distanceKm, waitingTimeMinutes, booking.vehicleType, surgeMultiplier, discount);
+  // Use the live pricing from currentFare (updated during trip) as the base fare
+  // This ensures consistency between what users see during the trip and the final charge
+  let fare = booking.currentFare;
+  
+  // Fallback: if currentFare is missing or invalid, use fareEstimated, then calculate from scratch
+  if (!fare || !Number.isFinite(fare) || fare <= 0) {
+    fare = booking.fareEstimated;
+    if (!fare || !Number.isFinite(fare) || fare <= 0) {
+      fare = await pricingService.calculateFare(distanceKm, waitingTimeMinutes, booking.vehicleType, surgeMultiplier, discount);
+    } else {
+      // Apply minimum/maximum fare constraints to the initial estimate
+      const pricing = await Pricing.findOne({ vehicleType: booking.vehicleType, isActive: true }).sort({ updatedAt: -1 });
+      if (pricing) {
+        const minimumFare = Number(pricing.minimumFare || 0);
+        const maximumFare = Number(pricing.maximumFare || 0);
+        
+        if (minimumFare > 0) {
+          fare = Math.max(fare, minimumFare);
+        }
+        if (maximumFare > 0) {
+          fare = Math.min(fare, maximumFare);
+        }
+      }
+      
+      // Apply surge multiplier and discount to the initial estimate
+      const multiplier = Number(surgeMultiplier || 1);
+      if (Number.isFinite(multiplier) && multiplier > 0) {
+        fare = fare * multiplier;
+      }
+      fare -= Number(discount || 0);
+      fare = Math.max(fare, 0);
+    }
+  } else {
+    // Apply minimum/maximum fare constraints to the live pricing
+    const pricing = await Pricing.findOne({ vehicleType: booking.vehicleType, isActive: true }).sort({ updatedAt: -1 });
+    if (pricing) {
+      const minimumFare = Number(pricing.minimumFare || 0);
+      const maximumFare = Number(pricing.maximumFare || 0);
+      
+      if (minimumFare > 0) {
+        fare = Math.max(fare, minimumFare);
+      }
+      if (maximumFare > 0) {
+        fare = Math.min(fare, maximumFare);
+      }
+    }
+    
+    // Apply surge multiplier and discount to the live pricing
+    const multiplier = Number(surgeMultiplier || 1);
+    if (Number.isFinite(multiplier) && multiplier > 0) {
+      fare = fare * multiplier;
+    }
+    fare -= Number(discount || 0);
+    fare = Math.max(fare, 0);
+  }
   // Get per-driver commission rate set by admin; fallback to env default
   let commissionRate = Number(process.env.COMMISSION_RATE || 15);
   if (booking.driverId) {

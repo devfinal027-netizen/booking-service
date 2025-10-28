@@ -25,9 +25,10 @@ async function emitActiveBookings(socket) {
       }));
 
     // Enrich bookings with driver snapshots when assigned but only fetch for bookings missing driver details
+    // Only fetch snapshots for bookings missing key driver details (avoid blocking when data already present)
     const uniqueDriverIds = [...new Set(activeBookings
-      .filter(b => b && b.driverId)
-      .map(b => b.driverId)
+      .filter((b) => b && b.driverId && (!b.driver || (!b.driver.carPlate && !b.driver.carColor)))
+      .map((b) => b.driverId)
     )];
     const driverMap = {};
     if (uniqueDriverIds.length) {
@@ -39,10 +40,16 @@ async function emitActiveBookings(socket) {
       }));
     }
 
-    const enriched = activeBookings.map(b => ({
-      ...b,
-      driver: (b.driverId ? driverMap[String(b.driverId)] : undefined) || b.driver
-    }));
+    // Merge any fetched driver snapshot with existing booking.driver to preserve fields
+    const enriched = activeBookings.map((b) => {
+      const did = b && b.driverId ? String(b.driverId) : undefined;
+      const fromSnapshot = did ? driverMap[did] : undefined;
+      if (fromSnapshot || b.driver) {
+        const mergedDriver = { ...(b.driver || {}), ...(fromSnapshot || {}) };
+        return { ...b, driver: mergedDriver };
+      }
+      return b;
+    });
 
     for (const booking of enriched) {
       if (booking && booking.id) {
@@ -56,8 +63,13 @@ async function emitActiveBookings(socket) {
     if (user.phone) passengerPayload.phone = user.phone;
     if (user.email) passengerPayload.email = user.email;
 
-    const uniqueDrivers = Object.values(driverMap).filter(Boolean);
-    const topLevelDriver = uniqueDrivers.length === 1 ? uniqueDrivers[0] : undefined;
+    // Determine top-level driver from enriched bookings to include merged car fields
+    const driverIdsInEnriched = [...new Set(enriched
+      .map((x) => (x && x.driverId ? String(x.driverId) : null))
+      .filter(Boolean))];
+    const topLevelDriver = driverIdsInEnriched.length === 1
+      ? (enriched.find((b) => String(b.driverId) === driverIdsInEnriched[0])?.driver)
+      : undefined;
 
     socket.emit('booking:active_snapshot', {
       bookings: enriched,
