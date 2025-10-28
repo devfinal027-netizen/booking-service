@@ -1,6 +1,21 @@
 const express = require("express");
 const router = express.Router();
 const { authenticate, authorize } = require("../../middleware/auth");
+const multer = require('multer');
+const path = require('path');
+
+// Multer config for payment option logo uploads and multipart parsing
+const storage = multer.diskStorage({
+  destination: function (_req, _file, cb) {
+    cb(null, path.join(process.cwd(), 'uploads', 'payment-options'));
+  },
+  filename: function (_req, file, cb) {
+    const ts = Date.now();
+    const safe = file.originalname.replace(/[^a-zA-Z0-9_.-]/g, '_');
+    cb(null, `${ts}-${safe}`);
+  }
+});
+const upload = multer({ storage });
 
 router.use("/auth", require("./auth.routes"));
 // Public webhooks (no auth) MUST be mounted before authenticate
@@ -40,8 +55,14 @@ router.get('/payment-options', async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 });
-router.post('/payment-options', authorize('admin','superadmin'), async (req, res) => {
+router.post('/payment-options', authorize('admin','superadmin'), upload.single('logo'), async (req, res) => {
   try {
+    // If a logo file was uploaded but logo URL not set, construct URL
+    if (req.file && !req.body.logo) {
+      const base = process.env.PUBLIC_BASE_URL || '';
+      const rel = `/uploads/payment-options/${req.file.filename}`;
+      req.body.logo = base ? `${base}${rel}` : rel;
+    }
     const { create } = require('../../controllers/paymentOption.controller');
     return await create(req, res);
   } catch (e) {
@@ -60,5 +81,6 @@ router.use("/mapping", require("./mapping.routes"));
 router.use("/passengers", require("./passenger.routes"));
 router.use("/analytics", require("./analytics.routes"));
 router.use("/wallet", require("./wallet.routes"));
+router.use("/admin", require("./admin.routes"));
 
 module.exports = router;

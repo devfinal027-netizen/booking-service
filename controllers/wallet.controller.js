@@ -4,15 +4,11 @@ const mongoose = require("mongoose");
 
 exports.topup = async (req, res) => {
   try {
-    const { amount, paymentMethod, reason = "Wallet Topup" } = req.body || {};
-    if (!amount || amount <= 0)
-      return res.status(400).json({ message: "amount must be > 0" });
+    const { amount, paymentMethod, reason = "Wallet Topup", phoneNumber } = req.body || {};
 
-    // Phone must come from token
-    const tokenPhone =
-      req.user && (req.user.phone || req.user.phoneNumber || req.user.mobile);
-    if (!tokenPhone)
-      return res.status(400).json({ message: "phoneNumber missing in token" });
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: "amount must be > 0" });
+    }
 
     // Normalize Ethiopian MSISDN
     const normalizeMsisdnEt = (raw) => {
@@ -30,17 +26,32 @@ exports.topup = async (req, res) => {
       return s;
     };
 
-    const msisdn = normalizeMsisdnEt(tokenPhone);
-    if (!msisdn)
+    // Choose phone number: body > token
+    const rawPhone = phoneNumber ||
+      req.user?.phone ||
+      req.user?.phoneNumber ||
+      req.user?.mobile;
+
+    if (!rawPhone) {
       return res.status(400).json({
-        message: "Invalid phone format in token. Required: +2519XXXXXXXX",
+        message: "phoneNumber is required in body or token",
       });
+    }
+
+    const msisdn = normalizeMsisdnEt(rawPhone);
+    if (!msisdn) {
+      return res.status(400).json({
+        message: "Invalid phone format. Required: +2519XXXXXXXX",
+      });
+    }
 
     const userId = String(req.user.id);
     const role = req.user.type;
 
     let wallet = await Wallet.findOne({ userId, role });
-    if (!wallet) wallet = await Wallet.create({ userId, role, balance: 0 });
+    if (!wallet) {
+      wallet = await Wallet.create({ userId, role, balance: 0 });
+    }
 
     // Generate ObjectId manually so we can use it for txnId/refId
     const txId = new mongoose.Types.ObjectId();
@@ -58,7 +69,7 @@ exports.topup = async (req, res) => {
       metadata: { reason },
     });
 
-    // Resolve payment method from explicit param or driver's selected PaymentOption
+    // Resolve payment method from body, paymentOption, or driver's preference
     async function resolvePaymentMethod() {
       const pick = (v) => (typeof v === 'string' && v.trim().length) ? v.trim() : null;
       const explicit = pick(paymentMethod);
@@ -66,7 +77,7 @@ exports.topup = async (req, res) => {
         console.log('Using explicit payment method:', explicit);
         return explicit;
       }
-      // Map paymentOptionId -> name
+
       try {
         const optId = req.body && (req.body.paymentOptionId || req.body.id);
         if (optId) {
@@ -80,17 +91,15 @@ exports.topup = async (req, res) => {
       } catch (e) {
         console.error('Error resolving payment option from request:', e);
       }
+
       try {
         const { Driver } = require("../models/userModels");
         const idStr = String(userId);
-        console.log('Looking for driver with ID:', idStr);
-        // Driver._id is String in our schema; always try by _id first
         let me = await Driver.findOne({ _id: idStr }).select({ paymentPreferences: 1, paymentPreference: 1 }).populate([
           { path: 'paymentPreferences', select: { name: 1 } },
           { path: 'paymentPreference', select: { name: 1 } }
         ]);
         if (!me && (req.user?.email || req.user?.phone || req.user?.phoneNumber || req.user?.mobile)) {
-          console.log('Driver not found by ID, trying by email/phone');
           me = await Driver.findOne({
             $or: [
               { email: req.user?.email || null },
@@ -101,8 +110,7 @@ exports.topup = async (req, res) => {
             { path: 'paymentPreference', select: { name: 1 } }
           ]);
         }
-        console.log('Found driver:', me ? 'yes' : 'no');
-        // Use first payment preference if available (handle both old and new formats)
+
         let prefs = [];
         if (me && me.paymentPreferences && Array.isArray(me.paymentPreferences)) {
           prefs = me.paymentPreferences;
@@ -117,25 +125,24 @@ exports.topup = async (req, res) => {
             return String(name).trim();
           }
         }
-        console.log('No payment preferences found for driver');
       } catch (e) {
         console.error('Error resolving driver payment preferences:', e);
       }
-      const err = new Error('paymentMethod is required and no driver payment preference is set');
+
+      const err = new Error('paymentMethod is required. Provide paymentMethod in request body or set a default payment preference');
       err.status = 400;
       throw err;
     }
-    // Normalize for SantimPay API accepted values (broadened names/aliases)
+
+    // Normalize payment method for gateway
     const normalizePaymentMethod = (method) => {
-      const raw = String(method || "").trim();
-      const m = raw.toLowerCase();
-      const table = {
+      const raw = String(method || "").trim().toLowerCase();
+      const map = {
         telebirr: 'Telebirr', tele: 'Telebirr', 'tele-birr': 'Telebirr', 'tele birr': 'Telebirr',
         cbe: 'CBE', 'cbe-birr': 'CBE', cbebirr: 'CBE', 'cbe birr': 'CBE',
-        'commercial bank of ethiopia (cbe)': 'CBE', 'commercial bank of ethiopia': 'CBE', 'commercial bank of ethiopia cbe': 'CBE',
         hellocash: 'HelloCash', 'hello-cash': 'HelloCash', 'hello cash': 'HelloCash',
         mpesa: 'MPesa', 'm-pesa': 'MPesa', 'm pesa': 'MPesa', 'm_pesa': 'MPesa',
-        'bank of abyssinia': 'Abyssinia', abyssinia: 'Abyssinia',
+        abyssinia: 'Abyssinia', 'bank of abyssinia': 'Abyssinia',
         awash: 'Awash', 'awash bank': 'Awash',
         dashen: 'Dashen', 'dashen bank': 'Dashen',
         bunna: 'Bunna', 'bunna bank': 'Bunna',
@@ -143,18 +150,16 @@ exports.topup = async (req, res) => {
         birhan: 'Birhan', 'birhan bank': 'Birhan',
         berhan: 'Berhan', 'berhan bank': 'Berhan',
         zamzam: 'ZamZam', 'zamzam bank': 'ZamZam',
-        yimlu: 'Yimlu',
+        yimlu: 'Yimlu'
       };
-      if (table[m]) return table[m];
-      // Map any residual bank keyword to CBE rails as a fallback
-      const bankKeywords = ['bank'];
-      if (bankKeywords.some(k => m.includes(k))) return 'CBE';
-      return raw; // pass-through for other configured options
+      if (map[raw]) return map[raw];
+      if (raw.includes('bank')) return 'CBE'; // fallback
+      return raw;
     };
 
     const methodForGateway = normalizePaymentMethod(await resolvePaymentMethod());
-    
-    // Debug logging
+
+    // Logging for debug
     console.log('Topup request:', {
       userId,
       msisdn,
@@ -166,6 +171,7 @@ exports.topup = async (req, res) => {
     const notifyUrl =
       process.env.SANTIMPAY_NOTIFY_URL ||
       `${process.env.PUBLIC_BASE_URL || ""}/v1/wallet/webhook`;
+
     let gw;
     try {
       gw = await santim.directPayment({
@@ -177,24 +183,21 @@ exports.topup = async (req, res) => {
         paymentMethod: methodForGateway,
       });
     } catch (err) {
-      // Normalize gateway error message
       const raw = String(err && err.message ? err.message : err || '');
       let friendly = null;
-      // Common pattern: 403 {"Reason":"payment method not supported"}
       const m1 = raw.match(/Reason\":\"([^\"]+)\"/i);
       if (m1 && m1[1]) friendly = m1[1];
       if (!friendly && /payment method not supported/i.test(raw)) friendly = 'payment method not supported';
-      // Persist failure on transaction
+
       try {
         await Transaction.findByIdAndUpdate(txId, { status: 'failed', metadata: { gatewayError: raw } });
       } catch (_) {}
+
       const msg = friendly || 'payment failed';
       return res.status(400).json({ message: msg });
     }
 
-    // Persist gateway response keys if present
-    const gwTxnId =
-      gw?.TxnId || gw?.txnId || gw?.data?.TxnId || gw?.data?.txnId;
+    const gwTxnId = gw?.TxnId || gw?.txnId || gw?.data?.TxnId || gw?.data?.txnId;
     await Transaction.findByIdAndUpdate(txId, {
       txnId: gwTxnId || undefined,
       metadata: { ...tx.metadata, gatewayResponse: gw },
@@ -472,7 +475,7 @@ exports.withdraw = async (req, res) => {
           const name = me && me.paymentPreference && me.paymentPreference.name ? String(me.paymentPreference.name).trim() : null;
           if (name) return name;
         } catch (_) {}
-        const err = new Error('paymentMethod is required and no driver payment preference is set');
+        const err = new Error('paymentMethod is required. Provide paymentMethod in request body or set a default payment preference');
         err.status = 400;
         throw err;
       }

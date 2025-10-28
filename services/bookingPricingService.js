@@ -120,21 +120,62 @@ async function calculateLivePricing(bookingId, currentLocation) {
       surgeMultiplier: pricing.surgeMultiplier
     });
 
-    // Calculate distance from pickup to current location
+    // Calculate cumulative path distance from TripHistory (with GPS filtering)
     logger.info('[PricingService] Calculating distance:', {
       bookingId,
       pickup: booking.pickup,
       currentLocation
     });
 
-    const distanceTraveled = geolib.getDistance(
-      { latitude: booking.pickup.latitude, longitude: booking.pickup.longitude },
-      { latitude: currentLocation.latitude, longitude: currentLocation.longitude }
-    ) / 1000; // Convert to kilometers
+    // Get cumulative path distance from TripHistory with GPS filtering
+    const { TripHistory } = require('../models/bookingModels');
+    const trip = await TripHistory.findOne({ bookingId: booking._id });
+    const locations = trip?.locations || [];
+    
+    let distanceTraveled = 0;
+    let movingMinutes = 0;
+    let waitingMinutes = 0;
+    if (locations.length >= 2) {
+      for (let i = 1; i < locations.length; i++) {
+        const a = locations[i - 1];
+        const b = locations[i];
+        const segmentDistanceKm = geolib.getDistance(
+          { latitude: a.lat, longitude: a.lng },
+          { latitude: b.lat, longitude: b.lng }
+        ) / 1000;
+        const t1 = a.timestamp ? new Date(a.timestamp).getTime() : undefined;
+        const t2 = b.timestamp ? new Date(b.timestamp).getTime() : undefined;
+        const dtSec = (Number.isFinite(t1) && Number.isFinite(t2)) ? Math.max(0, (t2 - t1) / 1000) : undefined;
+
+        const minDistanceKm = 0.025; // 25m
+        const minDtSec = 5; // 5s
+        const minSpeedMps = 1; // 1 m/s
+        const speedMps = (dtSec && dtSec > 0) ? (segmentDistanceKm * 1000) / dtSec : 0;
+
+        if (dtSec != null && dtSec >= minDtSec && segmentDistanceKm >= minDistanceKm && speedMps >= minSpeedMps) {
+          distanceTraveled += segmentDistanceKm;
+          movingMinutes += dtSec / 60;
+        } else if (dtSec != null && dtSec > 0) {
+          waitingMinutes += dtSec / 60;
+        }
+      }
+    } else {
+      // If not enough points, consider all elapsed time as waiting for now (no distance)
+      const referenceStart = booking.startedAt || booking.acceptedAt || booking.createdAt;
+      if (referenceStart) {
+        try {
+          const startTs = new Date(referenceStart).getTime();
+          if (Number.isFinite(startTs)) {
+            waitingMinutes = Math.max(0, (Date.now() - startTs) / 60000);
+          }
+        } catch (_) {}
+      }
+    }
 
     logger.info('[PricingService] Distance calculated:', {
       bookingId,
-      distanceTraveled: Math.round(distanceTraveled * 100) / 100
+      distanceTraveled: Math.round(distanceTraveled * 100) / 100,
+      locationCount: locations.length
     });
 
     const referenceStart = booking.startedAt || booking.acceptedAt || booking.createdAt;
@@ -157,8 +198,10 @@ async function calculateLivePricing(bookingId, currentLocation) {
     const maximumFare = Number(pricing.maximumFare || 0);
 
     const distanceCostRaw = distanceTraveled * perKm;
-    const timeCostRaw = elapsedMinutes * perMinute;
-    const waitingCostRaw = elapsedMinutes * waitingPerMinute;
+    
+    // Standard ride-hailing pricing: separate moving time from waiting time
+    const timeCostRaw = movingMinutes * perMinute;
+    const waitingCostRaw = waitingMinutes * waitingPerMinute;
 
     let currentFare = (baseFare + distanceCostRaw + timeCostRaw + waitingCostRaw) * surgeMultiplier;
     if (minimumFare > 0 && currentFare < minimumFare) {
@@ -176,6 +219,8 @@ async function calculateLivePricing(bookingId, currentLocation) {
       distanceCost: Number(distanceCostRaw.toFixed(2)),
       timeCost: Number(timeCostRaw.toFixed(2)),
       waitingCost: Number(waitingCostRaw.toFixed(2)),
+      movingMinutes: Number(movingMinutes.toFixed(2)),
+      waitingMinutes: Number(waitingMinutes.toFixed(2)),
       surgeMultiplier,
     };
 
@@ -234,7 +279,7 @@ async function calculateLivePricing(bookingId, currentLocation) {
     );
 
   try {
-    booking.fareEstimated = result.currentFare;
+    booking.currentFare = result.currentFare;
     booking.distanceKm = result.distanceTraveled;
     await booking.save();
   } catch (_) {}

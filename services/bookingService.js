@@ -197,6 +197,7 @@ async function listBookings({ requester, headers }) {
       dropoff: b.dropoff,
       distanceKm: b.distanceKm,
       fareEstimated: b.fareEstimated,
+      currentFare: b.currentFare,
       fareFinal: b.fareFinal,
       fareBreakdown: b.fareBreakdown,
       status: b.status,
@@ -246,6 +247,7 @@ async function getBooking({ requester, id }) {
     dropoff: item.dropoff,
     distanceKm: item.distanceKm,
     fareEstimated: item.fareEstimated,
+    currentFare: item.currentFare,
     fareFinal: item.fareFinal,
     fareBreakdown: item.fareBreakdown,
     status: item.status,
@@ -348,57 +350,11 @@ async function updateBookingLifecycle({ requester, id, status, reason, extras = 
     }
   }
   if (status === 'completed') {
-    booking.completedAt = new Date();
-    booking.fareFinal = booking.fareEstimated;
-    if (booking.driverId) {
-      const commission = await Commission.findOne({ driverId: String(booking.driverId) }).sort({ createdAt: -1 });
-      const commissionRate = commission && Number.isFinite(commission.percentage) ? commission.percentage : Number(process.env.COMMISSION_RATE || 15);
-      const grossFare = booking.fareFinal || booking.fareEstimated;
-      const commissionAmount = financeService.calculateCommission(grossFare, commissionRate);
-      const netEarnings = financeService.calculateNetIncome(grossFare, commissionRate);
-      await DriverEarnings.create({
-        driverId: booking.driverId,
-        bookingId: booking._id,
-        tripDate: new Date(),
-        grossFare,
-        commissionAmount,
-        netEarnings,
-        commissionPercentage: commissionRate
-      });
-      try {
-        const session = await mongoose.startSession();
-        await session.withTransaction(async () => {
-          await Wallet.updateOne(
-            { userId: String(booking.driverId), role: 'driver' },
-            { $inc: { balance: netEarnings, totalEarnings: netEarnings } },
-            { upsert: true, session }
-          );
-          await Transaction.create([
-            {
-              userId: String(booking.driverId),
-              role: 'driver',
-              amount: netEarnings,
-              type: 'credit',
-              method: booking.paymentMethod || 'cash',
-              status: 'success',
-              metadata: { bookingId: String(booking._id), reason: 'Trip earnings (REST)' }
-            }
-          ], { session });
-        });
-        session.endSession();
-      } catch (_) {}
-      await AdminEarnings.create({
-        bookingId: booking._id,
-        tripDate: new Date(),
-        grossFare,
-        commissionEarned: commissionAmount,
-        commissionPercentage: commissionRate,
-        driverId: booking.driverId,
-        passengerId: booking.passengerId
-      });
-      await Driver.findByIdAndUpdate(booking.driverId, { available: true });
-      positionUpdateService.stopTracking(booking._id.toString());
-    }
+    // Delegate completion flow to lifecycle service to compute final fare consistently
+    const lifecycle = require('./bookingLifecycleService');
+    const completed = await lifecycle.completeTrip(String(booking._id), /* endLocation */ undefined, {});
+    try { bookingEvents.emitLifecycleUpdate(completed, { previousStatus, driver: await buildDriverSnapshot(String(completed.driverId || ''), { fallbackVehicleType: completed.vehicleType }) }); } catch (_) {}
+    return completed;
   }
   if (status === 'canceled') {
     if (booking.driverId) await Driver.findByIdAndUpdate(booking.driverId, { available: true });

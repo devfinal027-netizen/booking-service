@@ -29,14 +29,8 @@ function validatePayload(body, { partial = false } = {}) {
     } else if (typeof body.logo !== 'string') {
       errors.push('logo must be a string URL');
     } else {
-      try {
-        // Basic URL validation
-        // eslint-disable-next-line no-new
-        new URL(body.logo);
-        payload.logo = body.logo;
-      } catch (_) {
-        errors.push('logo must be a valid URL');
-      }
+      // Accept absolute or relative URLs (multer path)
+      payload.logo = body.logo;
     }
   }
 

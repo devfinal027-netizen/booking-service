@@ -9,6 +9,10 @@ async function setAvailability(driverId, available, tokenUser) {
   const inferredEmail = tokenUser?.email || tokenUser?.user?.email;
   const inferredVehicleType = tokenUser?.vehicleType || tokenUser?.user?.vehicleType;
   const inferredExternalId = tokenUser?.externalId || tokenUser?.sub || tokenUser?.user?.externalId || tokenUser?.user?.id;
+  const carPlate = tokenUser?.carPlate || tokenUser?.user?.carPlate;
+  const carModel = tokenUser?.carModel || tokenUser?.user?.carModel;
+  const carColor = tokenUser?.carColor || tokenUser?.user?.carColor;
+  const carName = tokenUser?.carName || tokenUser?.user?.carName;
 
   const d = await Driver.findByIdAndUpdate(
     driverId,
@@ -19,7 +23,11 @@ async function setAvailability(driverId, available, tokenUser) {
         ...(inferredPhone ? { phone: inferredPhone } : {}),
         ...(inferredEmail ? { email: inferredEmail } : {}),
         ...(inferredVehicleType ? { vehicleType: inferredVehicleType } : {}),
-        ...(inferredExternalId ? { externalId: String(inferredExternalId) } : {})
+        ...(inferredExternalId ? { externalId: String(inferredExternalId) } : {}),
+        ...(carPlate ? { carPlate: carPlate } : {}),
+        ...(carModel ? { carModel: carModel } : {}),
+        ...(carColor ? { carColor: carColor } : {}),
+        ...(carName ? { carName: carName } : {})
       }
     },
     { new: true, upsert: true, setDefaultsOnInsert: true }
@@ -42,7 +50,10 @@ async function updateLocation(driverId, locationBody, tokenUser) {
   const inferredEmail = tokenUser?.email || tokenUser?.user?.email;
   const inferredVehicleType = tokenUser?.vehicleType || tokenUser?.user?.vehicleType;
   const inferredExternalId = tokenUser?.externalId || tokenUser?.sub || tokenUser?.user?.externalId || tokenUser?.user?.id;
-
+  const inferredCarPlate = tokenUser?.carPlate || tokenUser?.user?.carPlate;
+  const inferredCarModel = tokenUser?.carModel || tokenUser?.user?.carModel;
+  const inferredCarColor = tokenUser?.carColor || tokenUser?.user?.carColor;
+  const inferredCarName = tokenUser?.carName || tokenUser?.user?.carName;
   const d = await Driver.findByIdAndUpdate(
     driverId,
     {
@@ -52,7 +63,11 @@ async function updateLocation(driverId, locationBody, tokenUser) {
         ...(inferredPhone ? { phone: inferredPhone } : {}),
         ...(inferredEmail ? { email: inferredEmail } : {}),
         ...(inferredVehicleType ? { vehicleType: inferredVehicleType } : {}),
-        ...(inferredExternalId ? { externalId: String(inferredExternalId) } : {})
+        ...(inferredExternalId ? { externalId: String(inferredExternalId) } : {}),
+        ...(inferredCarPlate ? { carPlate: inferredCarPlate } : {}),
+        ...(inferredCarModel ? { carModel: inferredCarModel } : {}),
+        ...(inferredCarColor ? { carColor: inferredCarColor } : {}),
+        ...(inferredCarName ? { carName: inferredCarName } : {})
       }
     },
     { new: true, upsert: true, setDefaultsOnInsert: true }
