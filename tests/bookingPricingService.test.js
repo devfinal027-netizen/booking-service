@@ -6,6 +6,7 @@ describe('bookingPricingService.calculateLivePricing', () => {
   const location = { latitude: 9.03, longitude: 38.74 };
   let bookingDoc;
   let BookingStub;
+  let TripHistoryStub;
   let PricingStub;
   let broadcastStub;
   let emitStub;
@@ -16,7 +17,7 @@ describe('bookingPricingService.calculateLivePricing', () => {
 
   function loadService() {
     service = proxyquire('../services/bookingPricingService', {
-      '../models/bookingModels': { Booking: BookingStub },
+      '../models/bookingModels': { Booking: BookingStub, TripHistory: TripHistoryStub },
       '../models/pricing': { Pricing: PricingStub },
       '../sockets/utils': { broadcast: broadcastStub, emitBookingTargets: emitStub },
       '../utils/logger': loggerStub,
@@ -41,6 +42,15 @@ describe('bookingPricingService.calculateLivePricing', () => {
 
     BookingStub = {
       findById: sinon.stub().resolves(bookingDoc)
+    };
+
+    const t0 = new Date(Date.now() - (10 * 60 * 1000));
+    const t1 = new Date();
+    TripHistoryStub = {
+      findOne: sinon.stub().resolves({ bookingId: bookingDoc._id, locations: [
+        { lat: 9.01, lng: 38.75, timestamp: t0 },
+        { lat: 9.02, lng: 38.76, timestamp: t1 }
+      ] })
     };
 
     PricingStub = {

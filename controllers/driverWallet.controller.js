@@ -107,52 +107,6 @@ exports.adminListWallets = async (req, res) => {
     const minBalance = req.query.minBalance != null ? Number(req.query.minBalance) : undefined;
     const driverId = req.query.driverId ? String(req.query.driverId) : undefined;
 
-    // If driverId is provided, return single-wallet detail format (wallet + transactions)
-    if (driverId) {
-      const limit = Math.min(Math.max(parseInt(req.query.limit || '100', 10), 1), 500);
-      const [wallet, txs] = await Promise.all([
-        Wallet.findOne({ userId: driverId, role: 'driver' }).lean(),
-        Transaction.find({ userId: driverId, role: 'driver' }).sort({ createdAt: -1 }).limit(limit).lean(),
-      ]);
-      // Resolve user details
-      let user;
-      try {
-        const { Driver } = require('../models/userModels');
-        const { Types } = require('mongoose');
-        if (Types.ObjectId.isValid(driverId)) {
-          const d = await Driver.findById(driverId).select({ _id: 1, name: 1, phone: 1, email: 1 }).lean();
-          if (d) user = { id: String(d._id), name: d.name, phone: d.phone, email: d.email };
-        }
-        if (!user) {
-          const d = await Driver.findOne({ externalId: String(driverId) }).select({ _id: 1, name: 1, phone: 1, email: 1, externalId: 1 }).lean();
-          if (d) user = { id: String(d._id), name: d.name, phone: d.phone, email: d.email, externalId: String(d.externalId) };
-        }
-      } catch (_) {}
-      if (!user) {
-        try {
-          const { getDriverById } = require('../integrations/userServiceClient');
-          const headers = req.headers && req.headers.authorization ? { Authorization: req.headers.authorization } : undefined;
-          let info = await getDriverById(driverId, { headers });
-          if ((!info || !info.name || !info.phone) && process.env.AUTH_SERVICE_BEARER) {
-            info = await getDriverById(driverId, { headers: undefined });
-          }
-          if (info) user = { id: String(info.id), name: info.name, phone: info.phone, email: info.email };
-        } catch (_) {}
-      }
-      const baseWallet = wallet || { userId: driverId, role: 'driver', balance: 0, totalEarnings: 0, currency: 'ETB' };
-      const flattenedWallet = {
-        role: baseWallet.role,
-        balance: baseWallet.balance,
-        totalEarnings: baseWallet.totalEarnings || 0,
-        currency: baseWallet.currency || 'ETB',
-        id: (user && user.id) || String(baseWallet.userId),
-        name: user && user.name,
-        phone: user && user.phone,
-        email: user && user.email
-      };
-      return res.json({ wallet: flattenedWallet, transactions: txs });
-    }
-
     const filter = { role: 'driver' };
     if (driverId) filter.userId = driverId;
     if (Number.isFinite(minBalance)) filter.balance = { $gte: minBalance };
@@ -167,14 +121,15 @@ exports.adminListWallets = async (req, res) => {
     let enriched = items.map(w => ({ ...w, user: { id: String(w.userId) } }));
     try {
       const { Driver } = require('../models/userModels');
+      const { Types } = require('mongoose');
       const driverIds = [...new Set(items.map(w => String(w.userId)).filter(Boolean))];
-      // First try matching by local _id (string ids supported)
-      const driversById = driverIds.length ? await Driver.find({ _id: { $in: driverIds } }).select({ _id: 1, name: 1, phone: 1, email: 1 }).lean() : [];
+      const validIds = driverIds.filter(id => Types.ObjectId.isValid(id));
+      const driversById = validIds.length ? await Driver.find({ _id: { $in: validIds } }).select({ _id: 1, name: 1, phone: 1, email: 1 }).lean() : [];
       const dmapById = Object.fromEntries(driversById.map(d => [String(d._id), { id: String(d._id), name: d.name, phone: d.phone, email: d.email }]));
 
-      // Also try matching by externalId for any that didn't resolve by _id
-      const unresolvedIds = driverIds.filter(id => !dmapById[id]);
-      const driversByExternal = unresolvedIds.length ? await Driver.find({ externalId: { $in: unresolvedIds } }).select({ _id: 1, externalId: 1, name: 1, phone: 1, email: 1 }).lean() : [];
+      // Map local by externalId for non-ObjectId userIds
+      const nonObjectIds = driverIds.filter(id => !Types.ObjectId.isValid(id));
+      const driversByExternal = nonObjectIds.length ? await Driver.find({ externalId: { $in: nonObjectIds } }).select({ _id: 1, externalId: 1, name: 1, phone: 1, email: 1 }).lean() : [];
       const dmapByExternal = Object.fromEntries(driversByExternal.map(d => [String(d.externalId), { id: String(d._id), name: d.name, phone: d.phone, email: d.email, externalId: String(d.externalId) }]));
 
       enriched = enriched.map(w => ({
@@ -199,19 +154,7 @@ exports.adminListWallets = async (req, res) => {
       }
     } catch (_) {}
 
-    // Flatten format to match single-wallet endpoint style
-    const flattened = enriched.map(w => ({
-      role: w.role,
-      balance: w.balance,
-      totalEarnings: w.totalEarnings || 0,
-      currency: w.currency || 'ETB',
-      id: (w.user && w.user.id) || String(w.userId),
-      name: (w.user && w.user.name) ?? null,
-      phone: (w.user && w.user.phone) ?? null,
-      email: (w.user && w.user.email) ?? null
-    }));
-
-    return res.json({ items: flattened, page, pageSize, total });
+    return res.json({ items: enriched, page, pageSize, total });
   } catch (e) { return res.status(500).json({ message: e.message }); }
 };
 
@@ -251,17 +194,6 @@ exports.adminGetDriverWallet = async (req, res) => {
         if (info) user = { id: String(info.id), name: info.name, phone: info.phone, email: info.email };
       } catch (_) {}
     }
-    const baseWallet = wallet || { userId: driverId, role: 'driver', balance: 0, totalEarnings: 0, currency: 'ETB' };
-    const flattenedWallet = {
-      role: baseWallet.role,
-      balance: baseWallet.balance,
-      totalEarnings: baseWallet.totalEarnings || 0,
-      currency: baseWallet.currency || 'ETB',
-      id: (user && user.id) || String(baseWallet.userId),
-      name: user && user.name,
-      phone: user && user.phone,
-      email: user && user.email
-    };
-    return res.json({ wallet: flattenedWallet, transactions: txs });
+    return res.json({ wallet: wallet || { userId: driverId, role: 'driver', balance: 0, totalEarnings: 0, currency: 'ETB' }, user: user || { id: driverId }, transactions: txs });
   } catch (e) { return res.status(500).json({ message: e.message }); }
 };

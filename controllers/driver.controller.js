@@ -152,6 +152,95 @@ async function estimateFareForDriver(req, res) {
   } catch (e) { errorHandler(res, e); }
 }
 
+// Return latest driver location by phone number
+async function getLocationByPhone(req, res) {
+  try {
+    const rawPhone = (req && req.params && req.params.phone)
+      ? String(req.params.phone)
+      : ((req && req.query && req.query.phone) ? String(req.query.phone) : '');
+    const phone = rawPhone.trim();
+    if (!phone) return res.status(400).json({ message: 'phone is required' });
+
+    // Basic phone validation: 8-15 digits, optional leading +, allow separators/spaces
+    const digitsOnly = phone.replace(/[^0-9]/g, '');
+    if (digitsOnly.length < 8 || digitsOnly.length > 15) {
+      return res.status(400).json({ message: 'phone must contain 8-15 digits' });
+    }
+
+    // Flexible lookup: try raw, +digits, digits
+    const orPhones = Array.from(new Set([
+      phone,
+      `+${digitsOnly}`,
+      digitsOnly
+    ]));
+
+    const row = await Driver.findOne({ $or: orPhones.map(p => ({ phone: p })) })
+      .select({ _id: 1, name: 1, phone: 1, available: 1, lastKnownLocation: 1, updatedAt: 1 })
+      .lean();
+    if (!row) return res.status(404).json({ message: 'Driver not found' });
+
+    let location = null;
+    let source = 'none';
+    let updatedAtIso = row.updatedAt ? new Date(row.updatedAt).toISOString() : undefined;
+    try {
+      const { getLiveLocation } = require('../sockets/dispatchRegistry');
+      const live = getLiveLocation(row._id);
+      if (live && live.latitude != null && live.longitude != null) {
+        location = {
+          latitude: Number(live.latitude),
+          longitude: Number(live.longitude),
+          ...(live.bearing != null ? { bearing: Number(live.bearing) } : {})
+        };
+        source = 'live';
+        if (live.updatedAt) updatedAtIso = new Date(live.updatedAt).toISOString();
+      }
+    } catch (_) {}
+
+    // Fallback to latest Live snapshot in DB if in-memory socket cache is missing
+    if (!location) {
+      try {
+        const { Live } = require('../models/bookingModels');
+        const snap = await Live.findOne({ driverId: String(row._id), locationType: 'current' })
+          .sort({ timestamp: -1, updatedAt: -1, createdAt: -1 })
+          .lean();
+        if (snap && snap.latitude != null && snap.longitude != null) {
+          location = {
+            latitude: Number(snap.latitude),
+            longitude: Number(snap.longitude),
+            ...(snap.bearing != null ? { bearing: Number(snap.bearing) } : {})
+          };
+          source = 'live';
+          updatedAtIso = (snap.timestamp || snap.updatedAt || snap.createdAt || new Date()).toISOString();
+        }
+      } catch (_) {}
+    }
+
+    if (!location && row.lastKnownLocation && row.lastKnownLocation.latitude != null && row.lastKnownLocation.longitude != null) {
+      location = {
+        latitude: Number(row.lastKnownLocation.latitude),
+        longitude: Number(row.lastKnownLocation.longitude),
+        ...(row.lastKnownLocation.bearing != null ? { bearing: Number(row.lastKnownLocation.bearing) } : {})
+      };
+      source = 'db';
+    }
+
+    if (!location) {
+      return res.status(404).json({ message: 'Location not found for driver' });
+    }
+
+    return res.json({
+      driverId: String(row._id),
+      phone: row.phone,
+      name: row.name,
+      available: !!row.available,
+      location,
+      source,
+      updatedAt: updatedAtIso,
+      subscribeEvent: `driver:location:${String(row._id)}`
+    });
+  } catch (e) { errorHandler(res, e); }
+}
+
 module.exports = { 
   ...base, 
   setAvailability, 
@@ -159,6 +248,7 @@ module.exports = {
   availableNearby, 
   estimateFareForPassenger, 
   estimateFareForDriver,
+  getLocationByPhone,
   // Payment options
   listPaymentOptions: async (req, res) => {
     try {

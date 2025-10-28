@@ -544,7 +544,7 @@ try {
       let liveWriteError = false;
       try {
         const rawActiveBookings = await Booking.find({ driverId: driverDbId, status: { $in: ['accepted', 'ongoing'] } })
-          .select({ _id: 1, passengerId: 1, status: 1 })
+          .select({ _id: 1, passengerId: 1, status: 1, pickup: 1, dropoff: 1, startedAt: 1, driverId: 1 })
           .limit(25)
           .lean();
 
@@ -630,6 +630,17 @@ try {
               { includeOps: true }
             );
           }
+
+          // Trigger ETA broadcast only for ongoing trips (guarded inside service as well)
+          try {
+            const { calculateAndBroadcastEta } = require('../services/bookingPricingService');
+            const { getIo } = require('./utils');
+            const ioRef = getIo && getIo();
+            for (const booking of activeBookings) {
+              if (String(booking.status || '').toLowerCase() !== 'ongoing') continue;
+              await calculateAndBroadcastEta({ booking, driverLocation: { latitude: data.latitude, longitude: data.longitude }, io: ioRef, vehicleTypeOverride: socket.user && socket.user.vehicleType });
+            }
+          } catch (_) {}
 
           ackPayload.processedBookings = payloads.map((entry) => entry.bookingId);
           ackPayload.liveWrite = liveWriteError ? 'failed' : 'persisted';

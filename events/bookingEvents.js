@@ -143,6 +143,7 @@ function emitTripCompleted(booking) {
       bookingId: String(booking._id),
       amount: booking.fareFinal || booking.fareEstimated,
       distance: booking.distanceKm,
+      distanceTraveled: booking.distanceKm,
       waitingTime: booking.waitingTime,
       completedAt: booking.completedAt,
       driverEarnings: booking.driverEarnings,

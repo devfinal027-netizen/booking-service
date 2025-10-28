@@ -19,7 +19,7 @@ This document extracts the passenger-facing events from `docs/socket-events.md`.
 
 ### Server → passenger events
 - **Creation & room confirmation**: `booking:created`, `booking:joined`
-- **Lifecycle timeline**: `booking:update`, `trip:started`, `trip:ongoing`, `trip:completed`
+- **Lifecycle timeline**: `booking:update`, `trip:started`, `trip:ongoing`, `trip:completed` (includes `distanceTraveled` in km)
 - **Live tracking**: `booking:driver_location` (continuous GPS feed)
 - **ETA updates**: `booking:ETA_update`
 - **Pricing**: `pricing:update` reflects fare recalculations as trip advances

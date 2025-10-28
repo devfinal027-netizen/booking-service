@@ -63,11 +63,26 @@ module.exports = (io, socket) => {
     try { logger.info('[socket<-passenger] booking:request', { sid: socket.id, userId: socket.user && socket.user.id }); } catch (_) {}
     try {
       const data = typeof payload === 'string' ? JSON.parse(payload) : (payload || {});
-      if (!socket.user || String(socket.user.type).toLowerCase() !== 'passenger') {
-        emitSocketError(socket, 'booking_error', 'UNAUTHORIZED', 'Unauthorized: passenger token required', { source: 'booking:request' });
+      const requesterType = socket.user && socket.user.type ? String(socket.user.type).toLowerCase() : undefined;
+      if (!socket.user || !requesterType) {
+        emitSocketError(socket, 'booking_error', 'UNAUTHORIZED', 'Unauthorized: user token required', { source: 'booking:request' });
         return;
       }
-      const passengerId = String(socket.user.id);
+
+      // Determine passengerId based on requester type
+      let passengerId;
+      if (requesterType === 'passenger') {
+        passengerId = String(socket.user.id);
+      } else if (requesterType === 'admin' || requesterType === 'superadmin') {
+        if (!data.passengerId) {
+          emitSocketError(socket, 'booking_error', 'VALIDATION_ERROR', 'passengerId is required when creating a booking as an admin', { source: 'booking:request' });
+          return;
+        }
+        passengerId = String(data.passengerId);
+      } else {
+        emitSocketError(socket, 'booking_error', 'UNAUTHORIZED', 'Unauthorized: only passenger or admin can create booking', { source: 'booking:request' });
+        return;
+      }
       const booking = await bookingService.createBooking({
         passengerId,
         jwtUser: socket.user,
@@ -76,6 +91,12 @@ module.exports = (io, socket) => {
         dropoff: data.dropoff,
         authHeader: socket.authToken ? { Authorization: socket.authToken } : undefined
       });
+      // Guard log to verify dropoff presence from passenger request
+      try {
+        if (!booking.dropoff || booking.dropoff.latitude == null || booking.dropoff.longitude == null) {
+          logger.warn('[booking:request] dropoff missing on created booking', { bookingId: String(booking._id), payloadDropoff: data && data.dropoff });
+        }
+      } catch (_) {}
       const bookingRoom = `booking:${String(booking._id)}`;
       socket.join(bookingRoom);
       const createdPayload = { id: String(booking._id), bookingId: String(booking._id) };
@@ -251,9 +272,70 @@ module.exports = (io, socket) => {
       // Canonical `booking:update` emission carries enriched payload from lifecycle service; no legacy duplicates are emitted here.
 
       try {
+        // Notify only other dispatched drivers; do not broadcast to all drivers to avoid notifying the accepter
         notifyDispatchedRemoval(String(updated._id), String(socket.user.id), 'assigned');
         clearBookingDispatch(String(updated._id));
-        try { io.to('drivers').emit('booking:removed', { bookingId: String(updated._id), reason: 'assigned' }); } catch (_) {}
+      } catch (_) {}
+
+      // Pre-pickup ETA for passenger only (driver -> pickup) during accepted phase
+      try {
+        const { getIo } = require('./utils');
+        const ioRef = getIo && getIo();
+        if (ioRef && updated && updated.pickup && updated.passengerId) {
+          const { getLiveLocation } = require('./dispatchRegistry');
+          let origin = undefined;
+          const live = getLiveLocation(String(socket.user.id));
+          if (live && live.latitude != null && live.longitude != null) {
+            origin = { latitude: Number(live.latitude), longitude: Number(live.longitude) };
+          } else {
+            try {
+              const { Driver } = require('../models/userModels');
+              const d = await Driver.findById(String(socket.user.id)).select({ lastKnownLocation: 1 }).lean();
+              if (d && d.lastKnownLocation && d.lastKnownLocation.latitude != null && d.lastKnownLocation.longitude != null) {
+                origin = { latitude: Number(d.lastKnownLocation.latitude), longitude: Number(d.lastKnownLocation.longitude) };
+              }
+            } catch (_) {}
+          }
+          if (origin) {
+            const destination = { latitude: Number(updated.pickup.latitude), longitude: Number(updated.pickup.longitude) };
+            const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || process.env.GMAPS_API_KEY;
+            let etaSeconds;
+            let etaText;
+            if (GOOGLE_MAPS_API_KEY) {
+              try {
+                const { fetchEtaUsingGoogle } = require('../services/bookingPricingService');
+                const r = await fetchEtaUsingGoogle({ origin, destination, apiKey: GOOGLE_MAPS_API_KEY });
+                etaSeconds = r.etaSeconds;
+                etaText = r.etaText || `${Math.round((etaSeconds || 0)/60)} min`;
+              } catch (_) {}
+            }
+            if (!etaSeconds) {
+              try {
+                const { getEta } = require('../utils/routing');
+                const fb = await getEta({ from: origin, to: destination, vehicle: updated.vehicleType || 'car' });
+                if (fb && Number.isFinite(fb.etaMinutes)) {
+                  etaSeconds = Math.max(1, Math.round(Number(fb.etaMinutes) * 60));
+                  etaText = `${Math.round((etaSeconds || 0)/60)} min`;
+                }
+              } catch (_) {}
+            }
+            if (etaSeconds) {
+              const payload = {
+                bookingId: String(updated._id),
+                eta: { seconds: etaSeconds, text: etaText },
+                etaSeconds,
+                etaText,
+                driverLocation: origin,
+                destination,
+                phase: 'to_pickup'
+              };
+              const passengerRoom = `passenger:${String(updated.passengerId)}`;
+              try { ioRef.to(passengerRoom).emit('eta:update', payload); } catch (_) {}
+              try { ioRef.to(passengerRoom).emit('booking:ETA_update', payload); } catch (_) {}
+              try { logger.info('[eta] pre-pickup emitted', { bookingId: String(updated._id), passengerRoom }); } catch (_) {}
+            }
+          }
+        }
       } catch (_) {}
     } catch (err) {
       const safe = (m) => (m && m.message) ? m.message : 'Failed to accept booking';
@@ -373,9 +455,29 @@ module.exports = (io, socket) => {
         return;
       }
       const updated = await lifecycle.startTrip(bookingId, startLocation);
+      // Guard: ensure dropoff exists for ETA later; if missing and current booking has passenger dropoff, keep as is (booking creation should set dropoff)
+      try {
+        if (!updated.dropoff || updated.dropoff.latitude == null || updated.dropoff.longitude == null) {
+          // no-op: we don't override here; log for observability
+          logger.warn('[trip:started] dropoff missing for booking', { bookingId: String(updated._id) });
+        }
+      } catch (_) {}
       bookingEvents.emitTripStarted(updated);
       // Also emit an initial trip:ongoing update at the start location for clients expecting continuous stream from start
       try { if (startLocation) bookingEvents.emitTripOngoing(updated, startLocation); } catch (_) {}
+      // no ETA yet until status becomes ongoing (handled by trip:ongoing)
+      // End pre-pickup ETA for passenger (arrived at pickup)
+      try {
+        const { getIo } = require('./utils');
+        const ioRef = getIo && getIo();
+        const passengerRoom = updated && updated.passengerId ? `passenger:${String(updated.passengerId)}` : null;
+        if (ioRef && passengerRoom) {
+          const payload = { bookingId: String(updated._id), eta: { seconds: 0, text: 'arrived' }, etaSeconds: 0, etaText: 'arrived', ended: true, phase: 'to_pickup' };
+          try { ioRef.to(passengerRoom).emit('eta:update', payload); } catch (_) {}
+          try { ioRef.to(passengerRoom).emit('booking:ETA_update', payload); } catch (_) {}
+          try { logger.info('[eta] pre-pickup ended', { bookingId: String(updated._id), passengerRoom }); } catch (_) {}
+        }
+      } catch (_) {}
       try { logger.info('[socket->room] trip:started', { bookingId: String(updated._id) }); } catch (_) {}
     } catch (err) {
       logger.error('[trip:started] error', err);
@@ -403,6 +505,9 @@ module.exports = (io, socket) => {
         emitSocketError(socket, 'booking_error', 'NOT_FOUND', 'Booking not found or not assigned to you', { source: 'trip:ongoing', extras: { bookingId } });
         return;
       }
+      if (!booking.dropoff || booking.dropoff.latitude == null || booking.dropoff.longitude == null) {
+        try { logger.warn('[trip:ongoing] dropoff missing; ETA will be skipped', { bookingId }); } catch (_) {}
+      }
       const point = await lifecycle.updateTripLocation(bookingId, String(socket.user.id), location);
       bookingEvents.emitTripOngoing({ _id: booking._id, driverId: booking.driverId, passengerId: booking.passengerId }, point);
       try { logger.info('[socket->room] trip:ongoing', { bookingId, lat: point.lat, lon: point.lng }); } catch (_) {}
@@ -428,6 +533,14 @@ module.exports = (io, socket) => {
           });
         } catch (_) {}
       }
+
+      // Trigger ETA only while trip is ongoing
+      try {
+        const { calculateAndBroadcastEta } = require('../services/bookingPricingService');
+        const { getIo } = require('./utils');
+        const ioRef = getIo && getIo();
+        await calculateAndBroadcastEta({ booking, driverLocation: { latitude: Number(location.latitude), longitude: Number(location.longitude) }, io: ioRef });
+      } catch (_) {}
     } catch (err) {
       logger.error('[trip:ongoing] error', err);
       emitSocketError(socket, 'booking_error', 'INTERNAL_ERROR', 'Failed to update trip location', { source: 'trip:ongoing', details: err && err.message });
@@ -460,6 +573,13 @@ module.exports = (io, socket) => {
       }
     const updated = await lifecycle.completeTrip(bookingId, endLocation, { surgeMultiplier, discount, debitPassengerWallet });
     bookingEvents.emitTripCompleted(updated);
+    // Stop ETA updates and signal ended
+    try {
+      const { broadcastEtaEnded } = require('../services/bookingPricingService');
+      const { getIo } = require('./utils');
+      const ioRef = getIo && getIo();
+      broadcastEtaEnded({ booking: updated, io: ioRef });
+    } catch (_) {}
     try { logger.info('[socket->room] trip:completed', { bookingId: String(updated._id) }); } catch (_) {}
     } catch (err) {
       logger.error('[trip:completed] error', err);

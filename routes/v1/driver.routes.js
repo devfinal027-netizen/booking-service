@@ -7,6 +7,8 @@ const { authenticate, authorize } = require('../../middleware/auth');
 // Remove driver creation via API
 router.get('/', authenticate, authorize('admin','staff'), ctrl.list);
 router.get('/available', authenticate, ctrl.availableNearby);
+// Fetch latest driver location by phone (admin/staff only)
+router.get('/by-phone/:phone/location', authenticate, authorize('admin','staff'), ctrl.getLocationByPhone);
 router.get('/:id', authenticate, authorize('admin','staff'), ctrl.get);
 // Driver self-service
 // Driver self-service (id inferred from token; param ignored)
